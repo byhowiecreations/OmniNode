@@ -1,0 +1,29 @@
+{
+  "project_info": {
+    "project_number": "603674284138",
+    "project_id": "omninode-502915",
+    "storage_bucket": "omninode-502915.firebasestorage.app"
+  },
+  "client": [
+    {
+      "client_info": {
+        "mobilesdk_app_id": "1:603674284138:android:fabd3eb122ce76e7cdba13",
+        "android_client_info": {
+          "package_name": "com.omninode"
+        }
+      },
+      "oauth_client": [],
+      "api_key": [
+        {
+          "current_key": "AIzaSyAwhqcXPlMkPRByw-qVxFOPbmLtKVmsGzs"
+        }
+      ],
+      "services": {
+        "appinvite_service": {
+          "other_platform_oauth_client": []
+        }
+      }
+    }
+  ],
+  "configuration_version": "1"
+}
