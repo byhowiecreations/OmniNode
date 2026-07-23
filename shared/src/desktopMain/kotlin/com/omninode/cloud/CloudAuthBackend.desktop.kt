@@ -53,7 +53,7 @@ actual object CloudAuthBackend {
             setBody(
                 SignInWithIdpRequest(
                     postBody = "id_token=$idToken&providerId=google.com",
-                    requestUri = OAUTH_REDIRECT_URI,
+                    requestUri = DesktopAuthCoordinator.oauthRedirectUriForFirebase(),
                     returnIdpCredential = true,
                     returnSecureToken = true
                 )
@@ -112,6 +112,8 @@ actual object CloudAuthBackend {
             publicKeyHash = record.publicKeyHash,
             rootPath = record.rootPath,
             platform = record.platform,
+            clientVersion = record.clientVersion,
+            clientVersionCode = record.clientVersionCode,
             updatedAtEpochMs = record.updatedAtEpochMs
         )
         patchOrCreateDocument(
@@ -127,6 +129,8 @@ actual object CloudAuthBackend {
                 "publicKeyHash",
                 "rootPath",
                 "platform",
+                "clientVersion",
+                "clientVersionCode",
                 "updatedAtEpochMs"
             )
         )
@@ -151,6 +155,11 @@ actual object CloudAuthBackend {
                     )
                     put("rootPath", buildJsonObject { put("stringValue", presence.rootPath) })
                     put("platform", buildJsonObject { put("stringValue", presence.platform) })
+                    put("clientVersion", buildJsonObject { put("stringValue", presence.clientVersion) })
+                    put(
+                        "clientVersionCode",
+                        buildJsonObject { put("integerValue", presence.clientVersionCode.toString()) }
+                    )
                     put(
                         "updatedAtEpochMs",
                         buildJsonObject {
@@ -172,6 +181,8 @@ actual object CloudAuthBackend {
                 "publicKeyHash",
                 "rootPath",
                 "platform",
+                "clientVersion",
+                "clientVersionCode",
                 "updatedAtEpochMs"
             )
         )
@@ -261,6 +272,8 @@ actual object CloudAuthBackend {
                                 publicKeyHash = stringField(fields, "publicKeyHash").orEmpty(),
                                 rootPath = stringField(fields, "rootPath").orEmpty(),
                                 platform = stringField(fields, "platform").orEmpty(),
+                                clientVersion = stringField(fields, "clientVersion").orEmpty(),
+                                clientVersionCode = integerField(fields, "clientVersionCode")?.toInt() ?: 0,
                                 updatedAtEpochMs = integerField(fields, "updatedAtEpochMs") ?: 0L
                             )
                         }
@@ -338,6 +351,8 @@ actual object CloudAuthBackend {
         publicKeyHash: String,
         rootPath: String,
         platform: String,
+        clientVersion: String,
+        clientVersionCode: Int,
         updatedAtEpochMs: Long
     ): JsonObject = buildJsonObject {
         put(
@@ -350,6 +365,11 @@ actual object CloudAuthBackend {
                 put("publicKeyHash", buildJsonObject { put("stringValue", publicKeyHash) })
                 put("rootPath", buildJsonObject { put("stringValue", rootPath) })
                 put("platform", buildJsonObject { put("stringValue", platform) })
+                put("clientVersion", buildJsonObject { put("stringValue", clientVersion) })
+                put(
+                    "clientVersionCode",
+                    buildJsonObject { put("integerValue", clientVersionCode.toString()) }
+                )
                 put(
                     "updatedAtEpochMs",
                     buildJsonObject { put("integerValue", updatedAtEpochMs.toString()) }

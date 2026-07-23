@@ -38,7 +38,6 @@ fun main() {
     AppUpdateCoordinator.onAppLaunch()
     GoogleLinkCoordinator.onAppLaunch()
     MacOsExtensionRegistrar.registerOnLaunch()
-    DesktopShareServerController.startWakeListener()
     DesktopSendHandoff.installOpenUriHandler()
     DesktopSendHandoff.startJobProcessor()
 
@@ -88,6 +87,7 @@ fun main() {
             if (!windowState.isMinimized) {
                 DesktopWindowBoundsStore.persist(windowState.size, windowState.position)
             }
+            com.omninode.cloud.DesktopAuthCoordinator.cancelPending()
             DesktopShareServerController.shutdownBlocking()
         }
 

@@ -7,6 +7,8 @@ import com.omninode.util.NetworkUtils
 
 private var appContext: Context? = null
 
+internal fun androidApplicationContextOrNull(): Context? = appContext
+
 fun initAndroidLanConnectivity(context: Context) {
     appContext = context.applicationContext
 }

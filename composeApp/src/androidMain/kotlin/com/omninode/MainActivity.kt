@@ -161,6 +161,7 @@ class MainActivity : ComponentActivity() {
         if (hasStoragePermission) {
             startShareServer()
         }
+        com.omninode.domain.presence.PresenceForegroundRefresh.onAppForegrounded()
     }
 
     override fun onDestroy() {

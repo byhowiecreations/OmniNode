@@ -76,6 +76,7 @@ kotlin {
         }
 
         val desktopMain by getting {
+            kotlin.srcDir(layout.buildDirectory.dir("generated/desktopCloud/kotlin"))
             dependencies {
                 implementation(compose.desktop.currentOs)
                 implementation(libs.kotlinx.coroutines.swing)
@@ -114,6 +115,29 @@ room3 {
     schemaDirectory("$projectDir/schemas")
 }
 
+val generateDesktopCloudConfig = tasks.register("generateDesktopCloudConfig") {
+    val outDir = layout.buildDirectory.dir("generated/desktopCloud/kotlin")
+    val webClientSecret = providers.gradleProperty("omninode.google.web.client.secret").orElse("")
+    inputs.property("webClientSecret", webClientSecret)
+    outputs.dir(outDir)
+    doLast {
+        val secret = webClientSecret.get()
+        val escaped = secret.replace("\\", "\\\\").replace("\"", "\\\"")
+        val dir = outDir.get().asFile.resolve("com/omninode/cloud")
+        dir.mkdirs()
+        dir.resolve("GeneratedDesktopCloudConfig.kt").writeText(
+            """
+            |package com.omninode.cloud
+            |
+            |/** Generated from gradle.properties — do not edit. */
+            |internal object GeneratedDesktopCloudConfig {
+            |    const val WEB_CLIENT_SECRET = "$escaped"
+            |}
+            """.trimMargin()
+        )
+    }
+}
+
 val generateOmniNodeAppVersion = tasks.register("generateOmniNodeAppVersion") {
     val outDir = layout.buildDirectory.dir("generated/omninodeAppVersion/kotlin")
     val versionName = providers.gradleProperty("omninode.version.name")
@@ -145,10 +169,10 @@ val generateOmniNodeAppVersion = tasks.register("generateOmniNodeAppVersion") {
 }
 
 tasks.withType<KotlinCompilationTask<*>>().configureEach {
-    dependsOn(generateOmniNodeAppVersion)
+    dependsOn(generateOmniNodeAppVersion, generateDesktopCloudConfig)
 }
 
 tasks.matching { it.name.startsWith("ksp") }.configureEach {
-    dependsOn(generateOmniNodeAppVersion)
+    dependsOn(generateOmniNodeAppVersion, generateDesktopCloudConfig)
 }
 

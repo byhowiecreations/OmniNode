@@ -1,73 +1,41 @@
 package com.omninode.network
 
-import kotlinx.coroutines.CoroutineScope
-import kotlinx.coroutines.Dispatchers
-import kotlinx.coroutines.SupervisorJob
-import kotlinx.coroutines.cancel
-import kotlinx.coroutines.delay
-import kotlinx.coroutines.isActive
-import kotlinx.coroutines.launch
+import com.omninode.di.OmniNodeServices
+import com.omninode.domain.presence.PresenceForegroundRefresh
 
 /**
- * Desktop/Mac process-owned share server + UDP wake lifecycle around [ServerLifecycleManager].
- * Keeps Android/Desktop wake handling symmetric so neither OS leaves orphaned sockets.
+ * Desktop/Mac process-owned share server lifecycle around [ServerLifecycleManager].
+ * Includes a bound UDP wake listener so Android peers can trigger foreground refresh.
  */
 object DesktopShareServerController {
-    private val lifecycleLock = Any()
-    private var watchdogScope: CoroutineScope? = null
-    private var watchdogStarted = false
     private var wakeReceiver: UdpWakeReceiver? = null
-
-    /** Bind the UDP wake listener for the app process lifetime (blocking receive). */
-    fun startWakeListener() {
-        synchronized(lifecycleLock) {
-            if (wakeReceiver != null) return
-            val receiver = UdpWakeReceiver(
-                onWakeAccepted = {
-                    ServerLifecycleManager.ensureRunning(desktopLog)
-                },
-                onLog = { message -> println("DesktopShareServer: $message") }
-            )
-            wakeReceiver = receiver
-            receiver.start()
-            println("DesktopShareServer: UDP wake listener started")
-        }
-    }
 
     fun start() {
         ServerLifecycleManager.ensureRunning(desktopLog)
-        synchronized(lifecycleLock) {
-            if (!watchdogStarted) {
-                watchdogStarted = true
-                val scope = CoroutineScope(Dispatchers.IO + SupervisorJob())
-                watchdogScope = scope
-                scope.launch {
-                    while (isActive) {
-                        delay(5_000)
-                        if (!ServerLifecycleManager.isRunning) {
-                            println("DesktopShareServer: watchdog restart")
-                            ServerLifecycleManager.ensureRunning(desktopLog)
-                        }
-                    }
-                }
-            }
-        }
+        ensureWakeListener()
     }
 
     fun stop() {
+        wakeReceiver?.stop()
+        wakeReceiver = null
         shutdownBlocking()
     }
 
     fun shutdownBlocking() {
-        synchronized(lifecycleLock) {
-            wakeReceiver?.stop()
-            wakeReceiver = null
-            watchdogScope?.cancel()
-            watchdogScope = null
-            watchdogStarted = false
-        }
+        wakeReceiver?.stop()
+        wakeReceiver = null
         ServerLifecycleManager.stop(desktopLog)
         println("DesktopShareServer: shutdown complete")
+    }
+
+    private fun ensureWakeListener() {
+        if (wakeReceiver != null) return
+        wakeReceiver = UdpWakeReceiver(
+            onWakeAccepted = {
+                PresenceForegroundRefresh.onAppForegrounded()
+            },
+            onLog = { message -> println("DesktopShareServer: $message") }
+        ).also { it.start() }
     }
 
     private val desktopLog: (String, Throwable?) -> Unit = { message, error ->

@@ -32,6 +32,7 @@ import com.omninode.domain.pairing.PairingPayload
 import com.omninode.domain.share.IncomingSharePayload
 import com.omninode.data.settings.DesktopLayoutMode
 import com.omninode.di.OmniNodeServices
+import com.omninode.domain.presence.PresenceForegroundRefresh
 import com.omninode.navigation.AppRoute
 import com.omninode.platform.OmniBackHandler
 import com.omninode.platform.usesDesktopFileSelection
@@ -323,6 +324,7 @@ fun App(
             onPermissionRecheck()
         } else {
             onStartShareServer()
+            PresenceForegroundRefresh.onAppForegrounded()
         }
     }
 

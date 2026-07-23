@@ -3,6 +3,7 @@ package com.omninode.util
 import com.omninode.data.db.PairedDeviceEntity
 import com.omninode.data.identity.LocalDeviceNameStore
 import com.omninode.data.identity.LocalIdentity
+import com.omninode.platform.activeLanIpv4Addresses
 import com.omninode.platform.localIpv4Addresses
 
 /**
@@ -12,10 +13,29 @@ import com.omninode.platform.localIpv4Addresses
 object NetworkUtils {
     /**
      * Preferred LAN IPv4 for advertising this device.
-     * Falls back to loopback when no usable address is found.
+     * Prefers the active default-routed interface, then falls back to raw platform addresses.
      */
     fun preferredLanIpv4(): String =
-        selectBestLanIpv4(lanIpv4Addresses()) ?: "127.0.0.1"
+        selectBestLanIpv4(activeLanIpv4Addresses().filter { isUsableLanIpv4(it) })
+            ?: selectBestLanIpv4(lanIpv4Addresses())
+            ?: "127.0.0.1"
+
+    /**
+     * Ordered bind candidates for force-routed peer TCP/UDP — primary active LAN IP first.
+     */
+    fun lanBindCandidates(): List<String> {
+        val active = activeLanIpv4Addresses().filter { isUsableLanIpv4(it) }
+        val all = lanIpv4Addresses().filter { isUsableLanIpv4(it) }
+        val merged = (active + all).distinct()
+        if (merged.isEmpty()) {
+            return emptyList()
+        }
+        val primary = selectBestLanIpv4(active.ifEmpty { merged }) ?: merged.first()
+        return buildList {
+            add(primary)
+            addAll(merged.filter { it != primary })
+        }
+    }
 
     /** Raw platform LAN IPv4 list (platform may pre-sort; selection is finalized here). */
     fun lanIpv4Addresses(): List<String> = localIpv4Addresses()

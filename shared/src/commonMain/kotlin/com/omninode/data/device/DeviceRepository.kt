@@ -345,7 +345,7 @@ class DeviceRepository(
     }
 
     private fun pickWinner(related: List<PairedDeviceEntity>): PairedDeviceEntity =
-        related.minWith(devicePreferenceOrder())
+        related.maxWith(devicePreferenceOrder())
 
     private fun areAliases(a: PairedDeviceEntity, b: PairedDeviceEntity): Boolean {
         if (a.deviceId == b.deviceId) return true
@@ -401,11 +401,17 @@ class DeviceRepository(
             rootPath = primary.rootPath.ifBlank {
                 secondary.rootPath.ifBlank { "/" }
             },
-            clientVersion = incoming.clientVersion.ifBlank { primary.clientVersion.ifBlank { secondary.clientVersion } },
-            clientVersionCode = incoming.clientVersionCode.takeIf { it > 0 }
-                ?: primary.clientVersionCode.takeIf { it > 0 }
-                ?: secondary.clientVersionCode,
-            platform = incoming.platform.ifBlank { primary.platform.ifBlank { secondary.platform } },
+            clientVersion = firstNonBlank(
+                incoming.clientVersion,
+                primary.clientVersion,
+                secondary.clientVersion
+            ),
+            clientVersionCode = firstPositive(
+                incoming.clientVersionCode,
+                primary.clientVersionCode,
+                secondary.clientVersionCode
+            ),
+            platform = firstNonBlank(incoming.platform, primary.platform, secondary.platform),
             supportedProtocolsJson = incoming.supportedProtocolsJson.ifBlank {
                 primary.supportedProtocolsJson.ifBlank { secondary.supportedProtocolsJson }
             },
@@ -418,9 +424,9 @@ class DeviceRepository(
     }
 
     private fun devicePreferenceOrder(): Comparator<PairedDeviceEntity> =
-        compareBy<PairedDeviceEntity> { !hasUsableEndpoint(it) }
-            .thenByDescending { it.lastSeenEpochMs }
-            .thenByDescending { it.clientVersion.isNotBlank() }
+        compareBy<PairedDeviceEntity> { hasUsableEndpoint(it) }
+            .thenBy { it.lastSeenEpochMs }
+            .thenBy { it.clientVersion.isNotBlank() }
             .thenBy { it.deviceId }
 
     private fun hasUsableEndpoint(device: PairedDeviceEntity): Boolean =
@@ -495,6 +501,12 @@ class DeviceRepository(
     }
 
     private fun normalizeName(name: String): String = name.trim().lowercase()
+
+    private fun firstNonBlank(vararg values: String): String =
+        values.firstOrNull { it.trim().isNotEmpty() }?.trim().orEmpty()
+
+    private fun firstPositive(vararg values: Int): Int =
+        values.firstOrNull { it > 0 } ?: 0
 
     private fun endpointKey(ip: String, port: Int): String? {
         val cleaned = ip.trim()

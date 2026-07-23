@@ -6,6 +6,7 @@ import androidx.compose.runtime.remember
 import androidx.compose.runtime.rememberCoroutineScope
 import com.omninode.cloud.DesktopAuthCoordinator
 import com.omninode.cloud.googleWebClientId
+import com.omninode.cloud.googleWebClientSecret
 import java.awt.Desktop
 import java.net.URI
 import kotlinx.coroutines.flow.MutableSharedFlow
@@ -67,6 +68,14 @@ actual fun rememberGoogleSignInLauncher(
             } else {
                 scope.launch {
                     runCatching {
+                        DesktopAuthCoordinator.cancelPending()
+                        val secret = googleWebClientSecret()
+                        if (secret.isBlank()) {
+                            error(
+                                "Set omninode.google.web.client.secret in gradle.properties " +
+                                    "(Google Cloud Console → Web client → Client secret), then rebuild OmniNode.app"
+                            )
+                        }
                         val url = DesktopAuthCoordinator.beginAuthorizationUrl(clientId)
                         if (!Desktop.isDesktopSupported() ||
                             !Desktop.getDesktop().isSupported(Desktop.Action.BROWSE)

@@ -2,6 +2,7 @@ package com.omninode.cloud
 
 import com.omninode.di.OmniNodeServices
 import com.omninode.network.OmniHttpClientFactory
+import com.omninode.platform.DesktopOAuthCallbacks
 import io.ktor.client.request.post
 import io.ktor.client.request.setBody
 import io.ktor.client.statement.bodyAsText
@@ -17,26 +18,37 @@ import kotlinx.serialization.json.jsonPrimitive
 
 /**
  * Desktop OAuth / Google identity surface.
- * Keeps PKCE browser flow out of [CloudAuthBackend] (Firestore + token session SSOT).
+ * Uses PKCE + loopback redirect (http://127.0.0.1) per Google native-app policy.
  */
 object DesktopAuthCoordinator {
     data class PendingAuth(
         val codeVerifier: String,
-        val state: String
+        val state: String,
+        val redirectUri: String
     )
 
     @Volatile
     private var pending: PendingAuth? = null
 
+    /** Last loopback redirect used — required as Firebase signInWithIdp requestUri. */
+    @Volatile
+    private var lastOAuthRedirectUri: String = DESKTOP_OAUTH_LOOPBACK_REDIRECT_URI
+
+    fun oauthRedirectUriForFirebase(): String = lastOAuthRedirectUri
+
     fun beginAuthorizationUrl(webClientId: String): String {
         val verifier = randomUrlSafe(64)
         val challenge = sha256Base64Url(verifier)
         val state = randomUrlSafe(24)
-        pending = PendingAuth(codeVerifier = verifier, state = state)
+        val redirectUri = DesktopOAuthLoopbackServer.start { result ->
+            DesktopOAuthCallbacks.emit(result)
+        }
+        lastOAuthRedirectUri = redirectUri
+        pending = PendingAuth(codeVerifier = verifier, state = state, redirectUri = redirectUri)
         return buildString {
             append("https://accounts.google.com/o/oauth2/v2/auth")
             append("?client_id=").append(webClientId.encodeUrl())
-            append("&redirect_uri=").append(OAUTH_REDIRECT_URI.encodeUrl())
+            append("&redirect_uri=").append(redirectUri.encodeUrl())
             append("&response_type=code")
             append("&scope=").append("openid%20email%20profile")
             append("&code_challenge=").append(challenge.encodeUrl())
@@ -52,6 +64,13 @@ object DesktopAuthCoordinator {
         if (state != null && state != pendingAuth.state) {
             error("OAuth state mismatch")
         }
+        val clientSecret = googleWebClientSecret()
+        require(clientSecret.isNotBlank()) {
+            "Set omninode.google.web.client.secret in gradle.properties " +
+                "(Google Cloud Console → Web client → Client secret), then rebuild OmniNode.app"
+        }
+        val redirectUri = pendingAuth.redirectUri
+        lastOAuthRedirectUri = redirectUri
         pending = null
         val client = OmniNodeServices.httpClient
         val json = OmniHttpClientFactory.defaultJson
@@ -60,7 +79,8 @@ object DesktopAuthCoordinator {
             setBody(
                 "code=${code.encodeUrl()}" +
                     "&client_id=${googleWebClientId().encodeUrl()}" +
-                    "&redirect_uri=${OAUTH_REDIRECT_URI.encodeUrl()}" +
+                    "&client_secret=${clientSecret.encodeUrl()}" +
+                    "&redirect_uri=${redirectUri.encodeUrl()}" +
                     "&grant_type=authorization_code" +
                     "&code_verifier=${pendingAuth.codeVerifier.encodeUrl()}"
             )
@@ -71,6 +91,11 @@ object DesktopAuthCoordinator {
         val obj = json.parseToJsonElement(response.bodyAsText()).jsonObject
         return obj["id_token"]?.jsonPrimitive?.contentOrNull
             ?: error("Token response missing id_token")
+    }
+
+    fun cancelPending() {
+        pending = null
+        DesktopOAuthLoopbackServer.stop()
     }
 
     private fun randomUrlSafe(bytes: Int): String {
@@ -91,6 +116,11 @@ object DesktopAuthCoordinator {
 actual fun googleWebClientId(): String =
     DesktopCloudIds.WEB_CLIENT_ID.ifBlank {
         System.getProperty("omninode.google.web.client.id").orEmpty()
+    }
+
+internal fun googleWebClientSecret(): String =
+    System.getenv("OMNINODE_GOOGLE_WEB_CLIENT_SECRET")?.trim().orEmpty().ifBlank {
+        GeneratedDesktopCloudConfig.WEB_CLIENT_SECRET.trim()
     }
 
 actual fun firebaseApiKey(): String =

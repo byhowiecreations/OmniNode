@@ -12,6 +12,8 @@ data class CloudDeviceRecord(
     val publicKeyHash: String,
     val rootPath: String,
     val platform: String,
+    val clientVersion: String,
+    val clientVersionCode: Int,
     val updatedAtEpochMs: Long
 )
 
@@ -26,6 +28,8 @@ data class CloudDevicePresence(
     val publicKeyHash: String,
     val rootPath: String,
     val platform: String,
+    val clientVersion: String,
+    val clientVersionCode: Int,
     val updatedAtEpochMs: Long
 )
 

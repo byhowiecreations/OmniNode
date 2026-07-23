@@ -9,6 +9,8 @@ import com.omninode.domain.pairing.RemovedDeviceRecord
 import com.omninode.util.DeviceIdentityMarkers
 import com.omninode.util.NetworkUtils
 import com.omninode.util.TimestampDiagnostics
+import com.omninode.update.currentAppVersionCode
+import com.omninode.update.currentAppVersionName
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
 import kotlinx.coroutines.Job
@@ -18,7 +20,6 @@ import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.StateFlow
 import kotlinx.coroutines.flow.asStateFlow
-import kotlinx.coroutines.isActive
 import kotlinx.coroutines.launch
 import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
@@ -28,8 +29,8 @@ import kotlinx.coroutines.sync.withLock
  * Single source of truth for cloud pairing seed → local [com.omninode.data.device.DeviceRepository].
  *
  * [deviceName] is written to Firestore only from explicit user rename actions
- * ([publishUserRenamedDevice]). Heartbeats patch presence fields only, and only when those
- * fields actually change (never spam updatedAt-only writes that thrash listeners/UI).
+ * ([publishUserRenamedDevice]). Presence fields publish on cold launch, link/restore, and
+ * rename — never from a background heartbeat loop.
  *
  * Session teardown always drains Firestore listeners and session coroutines before Auth sign-out
  * or before a replacement session starts (avoids Firebase/SQLite "destroyed mutex" races).
@@ -59,7 +60,6 @@ object GoogleLinkCoordinator {
     private var lastPublishedPresence: CloudDevicePresence? = null
 
     private var registryHandle: CloudRegistryHandle? = null
-    private var heartbeatJob: Job? = null
 
     private val _status = MutableStateFlow<String?>(null)
     val status: StateFlow<String?> = _status.asStateFlow()
@@ -73,6 +73,18 @@ object GoogleLinkCoordinator {
                     println("GoogleLinkCoordinator: restore failed — ${error.message}")
                 }
         }
+    }
+
+    /** One-shot cloud presence publish on cold launch or foreground refresh. */
+    suspend fun publishSelfPresenceIfLinked() {
+        if (!OmniNodeServices.settings.googleAccountLinkEnabled.value) return
+        if (!cloudOpsActive) return
+        val uid = OmniNodeServices.settings.googleAccountUid.value
+        if (uid.isBlank()) return
+        runCatching { patchSelfPresence(uid) }
+            .onFailure { error ->
+                println("GoogleLinkCoordinator: presence publish failed — ${error.message}")
+            }
     }
 
     /**
@@ -167,7 +179,7 @@ object GoogleLinkCoordinator {
     }
 
     /**
-     * Invalidate epoch, cancel heartbeat, detach Firestore listener, and join all session work
+     * Invalidate epoch, detach Firestore listener, and join all session work
      * before Auth teardown or a new session attaches.
      */
     private suspend fun shutdownCloudSessionLocked() {
@@ -175,10 +187,6 @@ object GoogleLinkCoordinator {
         cloudOpsActive = false
         lastPublishedPresence = null
         lastCloudRegistryIds = emptySet()
-
-        val previousHeartbeat = heartbeatJob
-        heartbeatJob = null
-        previousHeartbeat?.cancelAndJoin()
 
         val previousHandle = registryHandle
         registryHandle = null
@@ -225,14 +233,6 @@ object GoogleLinkCoordinator {
                 }
             }
         )
-
-        heartbeatJob = scope.launch {
-            while (isActive && isSessionLive(epoch)) {
-                delay(HEARTBEAT_MS)
-                if (!isSessionLive(epoch)) break
-                runCatching { patchSelfPresence(uid) }
-            }
-        }
     }
 
     private fun isSessionLive(epoch: Long): Boolean =
@@ -269,6 +269,8 @@ object GoogleLinkCoordinator {
             publicKeyHash = presence.publicKeyHash,
             rootPath = presence.rootPath,
             platform = presence.platform,
+            clientVersion = presence.clientVersion,
+            clientVersionCode = presence.clientVersionCode,
             updatedAtEpochMs = presence.updatedAtEpochMs
         )
     }
@@ -284,6 +286,8 @@ object GoogleLinkCoordinator {
             publicKeyHash = DeviceIdentityMarkers.fingerprint(identity.deviceId),
             rootPath = identity.rootPath,
             platform = currentPlatformLabel(),
+            clientVersion = currentAppVersionName(),
+            clientVersionCode = currentAppVersionCode(),
             updatedAtEpochMs = TimestampDiagnostics.mutatingNow(
                 "GoogleLinkCoordinator.buildSelfPresence.updatedAtEpochMs"
             )
@@ -343,6 +347,7 @@ object GoogleLinkCoordinator {
                         // Publish our name TO the cloud on rename; never import OUR name FROM cloud.
                         return@forEach
                     }
+                    val local = repo.getDevice(remote.deviceId)
                     runCatching {
                         if (!isSessionLive(epoch)) return@runCatching
                         repo.upsertReplacingAliases(
@@ -353,6 +358,13 @@ object GoogleLinkCoordinator {
                                 port = remote.port,
                                 publicKeyHash = remote.publicKeyHash,
                                 rootPath = remote.rootPath.ifBlank { "/" },
+                                clientVersion = remote.clientVersion.ifBlank {
+                                    local?.clientVersion.orEmpty()
+                                },
+                                clientVersionCode = remote.clientVersionCode.takeIf { it > 0 }
+                                    ?: local?.clientVersionCode
+                                    ?: 0,
+                                platform = remote.platform.ifBlank { local?.platform.orEmpty() },
                                 lastSeenEpochMs = remote.updatedAtEpochMs.coerceAtLeast(0L)
                             )
                         )
@@ -385,9 +397,10 @@ object GoogleLinkCoordinator {
             port == other.port &&
             publicKeyHash == other.publicKeyHash &&
             rootPath == other.rootPath &&
-            platform == other.platform
+            platform == other.platform &&
+            clientVersion == other.clientVersion &&
+            clientVersionCode == other.clientVersionCode
 
-    private const val HEARTBEAT_MS = 60_000L
     private const val SESSION_SETTLE_MS = 50L
 }
 

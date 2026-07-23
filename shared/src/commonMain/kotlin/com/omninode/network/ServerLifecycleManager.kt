@@ -2,7 +2,6 @@ package com.omninode.network
 
 import com.omninode.data.identity.loadLocalIdentity
 import com.omninode.di.OmniNodeServices
-import com.omninode.domain.pairing.LanSelfMetadataBroadcaster
 
 /**
  * Process-wide OmniNode share-server lifecycle.
@@ -55,7 +54,7 @@ object ServerLifecycleManager {
             },
             onLog = onLog
         ).also { it.start() }
-        LanSelfMetadataBroadcaster.start()
+        OmniNodeServices.presenceMonitor.scheduleColdLaunchProbeOnce()
         onLog(
             "Share server ensured running on port ${identity.sharePort} " +
                 "root=${identity.rootPath}",
@@ -64,7 +63,6 @@ object ServerLifecycleManager {
     }
 
     private fun stopLocked(onLog: (String, Throwable?) -> Unit) {
-        LanSelfMetadataBroadcaster.stop()
         val current = serverInstance
         serverInstance = null
         if (current != null) {

@@ -91,8 +91,14 @@ class OmniNodeServer(
                 serverScope = CoroutineScope(Dispatchers.IO + lifecycleJob)
             }
 
-            onLog("Starting CIO engine on 0.0.0.0:$port", null)
-            serverEngine = embeddedServer(CIO, port = port, host = "0.0.0.0") {
+            val bindHost = "0.0.0.0"
+            val advertiseIp = LanInterfaceBinding.primaryLanIpv4OrNull()
+            onLog(
+                "Starting CIO engine on $bindHost:$port" +
+                    (advertiseIp?.let { " (LAN $it)" }.orEmpty()),
+                null
+            )
+            serverEngine = embeddedServer(CIO, port = port, host = bindHost) {
             install(StatusPages) {
                 exception<Throwable> { call, cause ->
                     onLog("Unhandled route exception", cause)

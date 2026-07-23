@@ -46,6 +46,8 @@ actual object CloudAuthBackend {
             "publicKeyHash" to record.publicKeyHash,
             "rootPath" to record.rootPath,
             "platform" to record.platform,
+            "clientVersion" to record.clientVersion,
+            "clientVersionCode" to record.clientVersionCode,
             "updatedAtEpochMs" to record.updatedAtEpochMs
         )
         deviceDoc(uid, record.deviceId)
@@ -61,6 +63,8 @@ actual object CloudAuthBackend {
             "publicKeyHash" to presence.publicKeyHash,
             "rootPath" to presence.rootPath,
             "platform" to presence.platform,
+            "clientVersion" to presence.clientVersion,
+            "clientVersionCode" to presence.clientVersionCode,
             "updatedAtEpochMs" to presence.updatedAtEpochMs
         )
         val ref = deviceDoc(uid, presence.deviceId)
@@ -129,6 +133,8 @@ actual object CloudAuthBackend {
                         publicKeyHash = doc.getString("publicKeyHash").orEmpty(),
                         rootPath = doc.getString("rootPath").orEmpty(),
                         platform = doc.getString("platform").orEmpty(),
+                        clientVersion = doc.getString("clientVersion").orEmpty(),
+                        clientVersionCode = (doc.getLong("clientVersionCode") ?: 0L).toInt(),
                         updatedAtEpochMs = doc.getLong("updatedAtEpochMs") ?: 0L
                     )
                 }

@@ -25,10 +25,12 @@ object PeerNodeStateMapper {
         pinRequired: Boolean = false,
         lastSeenTimestamp: Long = TimeUtils.now()
     ): PeerNodeState {
+        val advertiseIp = NetworkUtils.lanBindCandidates().firstOrNull()
+            ?: NetworkUtils.preferredLanIpv4()
         return PeerNodeState(
             deviceId = identity.deviceId,
             deviceName = deviceName.trim(),
-            ipAddress = NetworkUtils.preferredLanIpv4(),
+            ipAddress = advertiseIp,
             port = identity.sharePort,
             clientVersion = currentAppVersionName(),
             clientVersionCode = currentAppVersionCode(),

@@ -75,9 +75,17 @@ class PairingCoordinator(
      * Broadcasts this node's own metadata once to every paired peer (rename / identity refresh).
      */
     suspend fun broadcastSelfIdentity() {
+        if (!NetworkUtils.isUsableLanIpv4(NetworkUtils.preferredLanIpv4())) {
+            println("PairingCoordinator: skip self broadcast — no usable LAN IPv4")
+            return
+        }
         val selfState = selfNodeState()
         val peers = repository.listDevices()
         for (peer in peers) {
+            val host = peer.lastKnownIp.trim()
+            if (!NetworkUtils.isUsableLanIpv4(host)) {
+                continue
+            }
             runCatching {
                 client.postClusterSync(
                     host = peer.lastKnownIp,

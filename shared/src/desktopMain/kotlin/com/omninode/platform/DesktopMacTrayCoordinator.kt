@@ -1,6 +1,7 @@
 package com.omninode.platform
 
 import com.omninode.di.OmniNodeServices
+import com.omninode.domain.presence.PresenceForegroundRefresh
 import java.awt.Window
 import kotlinx.coroutines.CoroutineScope
 import kotlinx.coroutines.Dispatchers
@@ -101,6 +102,7 @@ object DesktopMacTrayCoordinator {
             mainWindow?.requestFocus()
         }
         refreshDeviceSnapshotFromTray()
+        PresenceForegroundRefresh.onAppForegrounded()
     }
 
     private fun refreshDeviceSnapshotFromTray() {

@@ -1,10 +1,12 @@
 package com.omninode.domain.presence
 
+import com.omninode.cloud.GoogleLinkCoordinator
 import com.omninode.data.db.PairedDeviceEntity
 import com.omninode.data.device.DeviceRepository
-import com.omninode.domain.presence.LanPresenceTiming
+import com.omninode.di.OmniNodeServices
 import com.omninode.domain.transfer.MultiCopyDeviceOption
 import com.omninode.network.OmniNodeClient
+import com.omninode.network.ServerLifecycleManager
 import com.omninode.network.sendWakeBroadcast
 import com.omninode.util.TimeUtils
 import kotlinx.coroutines.CoroutineScope
@@ -21,10 +23,13 @@ import kotlinx.coroutines.sync.Mutex
 import kotlinx.coroutines.sync.withLock
 
 /**
- * Passive peer reachability from inbound LAN merge payloads and Firebase sync.
+ * Intent-driven peer reachability — no idle LAN/cloud polling loops.
  *
- * Active LAN health probes run only on user-initiated browse or transfer actions —
- * never as an idle background poll loop.
+ * Peer visibility updates from:
+ * - Cold launch + app-foreground HTTP sweeps (probe → LAN discovery → self-metadata push)
+ * - User-initiated browse / transfer taps
+ * - Inbound [POST /devices/merge] payloads and Firebase listener snapshots
+ * - Local-only badge re-evaluation when offline-grace windows expire
  */
 class PeerPresenceMonitor(
     private val repository: DeviceRepository,
@@ -34,13 +39,17 @@ class PeerPresenceMonitor(
     private val reachabilityLock = Mutex()
     private val scope = CoroutineScope(SupervisorJob() + Dispatchers.IO)
     private var snapshotWatcherJob: Job? = null
+    private var lanPollJob: Job? = null
+    @Volatile
+    private var coldLaunchProbeScheduled = false
+    @Volatile
+    private var lastForegroundRefreshEpochMs = 0L
 
     private val lastReachableEpochById = mutableMapOf<String, Long>()
     private val _reachabilityEpochMs = MutableStateFlow<Map<String, Long>>(emptyMap())
     private val _onlineSnapshotEpochMs = MutableStateFlow(0L)
 
     val reachabilityEpochMs: StateFlow<Map<String, Long>> = _reachabilityEpochMs.asStateFlow()
-    /** Bumps when offline-grace windows are re-evaluated locally (no network I/O). */
     val onlineSnapshotEpochMs: StateFlow<Long> = _onlineSnapshotEpochMs.asStateFlow()
 
     private val _onlineDeviceIds = MutableStateFlow<Set<String>>(emptySet())
@@ -52,10 +61,7 @@ class PeerPresenceMonitor(
         return TimeUtils.isWithinWindow(lastSeen, LanPresenceTiming.OFFLINE_GRACE_MS)
     }
 
-    /**
-     * Starts a local-only watcher that re-evaluates grace windows for UI badges.
-     * Does not perform any outbound network probes.
-     */
+    /** Local-only watcher — re-evaluates grace windows for badges without network I/O. */
     fun ensureOnlineSnapshotWatcher() {
         if (snapshotWatcherJob?.isActive == true) return
         snapshotWatcherJob = scope.launch {
@@ -67,14 +73,72 @@ class PeerPresenceMonitor(
         }
     }
 
-    fun stopOnlineSnapshotWatcher() {
-        snapshotWatcherJob?.cancel()
-        snapshotWatcherJob = null
+    /**
+     * Active LAN poll — restores reciprocal probes so Mac and Android rediscover stale endpoints.
+     * Honor 0.1.10b relied on this; 0.2.x removed it and broke Mac visibility on most phones.
+     */
+    fun ensureLanPollLoop() {
+        if (lanPollJob?.isActive == true) return
+        lanPollJob = scope.launch {
+            runPeerRefreshSweep()
+            while (isActive) {
+                delay(LanPresenceTiming.ACTIVE_LAN_POLL_MS)
+                runPeerRefreshSweep()
+            }
+        }
+    }
+
+    @Deprecated("Use ensureLanPollLoop()", ReplaceWith("ensureLanPollLoop()"))
+    fun ensureDesktopLanPoll() = ensureLanPollLoop()
+
+    /**
+     * One-time cold-launch sweep after the share server starts.
+     */
+    fun scheduleColdLaunchProbeOnce() {
+        if (coldLaunchProbeScheduled) return
+        coldLaunchProbeScheduled = true
+        scope.launch {
+            runPeerRefreshSweep()
+        }
     }
 
     /**
-     * Records passive reachability from inbound [POST /devices/merge] payloads or Firebase sync.
+     * Foreground resume refresh — debounced, repeats while the app stays open.
      */
+    fun refreshPeersOnForeground() {
+        val now = TimeUtils.now()
+        if (now - lastForegroundRefreshEpochMs < LanPresenceTiming.FOREGROUND_REFRESH_DEBOUNCE_MS) {
+            return
+        }
+        lastForegroundRefreshEpochMs = now
+        scope.launch {
+            runPeerRefreshSweep()
+        }
+    }
+
+    private suspend fun runPeerRefreshSweep() {
+        awaitShareServerReady()
+        val peers = mutex.withLock { repository.listDevices() }
+        runCatching { sendWakeBroadcast() }
+        for (peer in peers) {
+            primePeer(peer, includeDiscovery = true, allowPassiveWait = true)
+        }
+        // Push Mac/phone self metadata after discovery refreshed stale peer IPs.
+        runCatching { OmniNodeServices.pairingCoordinator.broadcastSelfIdentity() }
+        refreshOnlineSnapshot()
+        runCatching { GoogleLinkCoordinator.publishSelfPresenceIfLinked() }
+    }
+
+    private suspend fun awaitShareServerReady() {
+        repeat(SERVER_READY_ATTEMPTS) {
+            if (ServerLifecycleManager.isRunning) {
+                delay(SERVER_SETTLE_MS)
+                return
+            }
+            delay(SERVER_READY_POLL_MS)
+        }
+    }
+
     suspend fun notifyPassiveReachability(vararg deviceIds: String, epochMs: Long = TimeUtils.now()) {
         markReachable(*deviceIds, epochMs = epochMs)
         refreshOnlineSnapshot()
@@ -86,55 +150,103 @@ class PeerPresenceMonitor(
         _onlineSnapshotEpochMs.value = TimeUtils.now()
     }
 
-    /**
-     * On-demand health validation when the user opens a remote device.
-     */
     suspend fun validatePeerOnDemand(peer: PairedDeviceEntity): Boolean {
         runCatching { sendWakeBroadcast() }
-        return primePeer(peer)
+        val reached = primePeer(peer, includeDiscovery = true, allowPassiveWait = true)
+        refreshOnlineSnapshot()
+        return reached
     }
 
-    /**
-     * Pre-transfer wake/ping: UDP wake, health probe, identity ingest, and reachability refresh.
-     */
     suspend fun primePeersForTransfer(targets: List<MultiCopyDeviceOption>) {
         if (targets.isEmpty()) return
         runCatching { sendWakeBroadcast() }
         for (target in targets.filter { !it.isLocal }) {
             val peer = mutex.withLock { repository.getDevice(target.deviceId) } ?: continue
-            primePeer(peer)
+            primePeer(peer, includeDiscovery = true, allowPassiveWait = true)
         }
         refreshOnlineSnapshot()
     }
 
-    private suspend fun primePeer(peer: PairedDeviceEntity): Boolean {
+    private suspend fun primePeer(
+        peer: PairedDeviceEntity,
+        includeDiscovery: Boolean,
+        allowPassiveWait: Boolean
+    ): Boolean {
+        val attempts = LanPresenceTiming.ON_DEMAND_PRIME_ATTEMPTS
+        val retryMs = LanPresenceTiming.ON_DEMAND_PRIME_RETRY_MS
+        val timeoutMs = LanPresenceTiming.ON_DEMAND_HEALTH_TIMEOUT_MS
+
+        if (tryStoredEndpoint(peer, attempts, retryMs, timeoutMs)) {
+            return true
+        }
+
+        if (allowPassiveWait) {
+            delay(LanPresenceTiming.PASSIVE_ENDPOINT_WAIT_MS)
+            val refreshed = mutex.withLock { repository.getDevice(peer.deviceId) } ?: peer
+            if (refreshed.lastKnownIp != peer.lastKnownIp || refreshed.port != peer.port) {
+                if (tryStoredEndpoint(refreshed, attempts, retryMs, timeoutMs)) {
+                    return true
+                }
+            }
+        }
+
+        if (includeDiscovery) {
+            val target = mutex.withLock { repository.getDevice(peer.deviceId) } ?: peer
+            val discoveryBudget = if (isDeviceOnline(target)) {
+                LanPresenceTiming.LAN_DISCOVERY_BUDGET_MS
+            } else {
+                LanPresenceTiming.STALE_PEER_LAN_DISCOVERY_BUDGET_MS
+            }
+            val discovered = PeerLanDiscovery.discoverPeerState(
+                peer = target,
+                client = client,
+                budgetMs = discoveryBudget
+            )
+            if (discovered != null) {
+                mutex.withLock {
+                    repository.applyPeerNodeState(discovered, rosterDeviceId = peer.deviceId)
+                }
+                markReachable(peer.deviceId, discovered.deviceId.trim())
+                return true
+            }
+        }
+
+        return isDeviceOnline(mutex.withLock { repository.getDevice(peer.deviceId) } ?: peer)
+    }
+
+    private suspend fun tryStoredEndpoint(
+        peer: PairedDeviceEntity,
+        attempts: Int,
+        retryMs: Long,
+        timeoutMs: Long
+    ): Boolean {
         val host = peer.lastKnownIp.trim()
         if (host.isEmpty() || host == "127.0.0.1" || host == "0.0.0.0") {
             return false
         }
-        repeat(PRIME_ATTEMPTS) { attempt ->
-            if (client.pingHealth(host, peer.port)) {
+        repeat(attempts) { attempt ->
+            if (client.pingHealth(host, peer.port, timeoutMs)) {
                 markReachable(peer.deviceId)
-                val state = runCatching { client.fetchPeerNodeState(host, peer.port) }.getOrNull()
+                val state = runCatching {
+                    client.fetchPeerNodeState(host, peer.port, timeoutMs)
+                }.getOrNull()
                 if (state != null) {
                     mutex.withLock {
                         repository.applyPeerNodeState(state, rosterDeviceId = peer.deviceId)
                     }
                     markReachable(state.deviceId.trim())
-                    refreshOnlineSnapshot()
                     return true
                 }
                 mutex.withLock {
                     repository.touchPeerLastSeen(peer.deviceId, host, peer.port)
                 }
-                refreshOnlineSnapshot()
                 return true
             }
-            if (attempt < PRIME_ATTEMPTS - 1) {
-                delay(PRIME_RETRY_MS)
+            if (attempt < attempts - 1) {
+                delay(retryMs)
             }
         }
-        return isDeviceOnline(peer)
+        return false
     }
 
     private suspend fun markReachable(vararg deviceIds: String, epochMs: Long = TimeUtils.now()) {
@@ -166,9 +278,9 @@ class PeerPresenceMonitor(
     }
 
     companion object {
-        /** @see LanPresenceTiming.OFFLINE_GRACE_MS */
         const val OFFLINE_GRACE_MS = LanPresenceTiming.OFFLINE_GRACE_MS
-        private const val PRIME_ATTEMPTS = 4
-        private const val PRIME_RETRY_MS = 750L
+        private const val SERVER_READY_ATTEMPTS = 25
+        private const val SERVER_READY_POLL_MS = 100L
+        private const val SERVER_SETTLE_MS = 250L
     }
 }

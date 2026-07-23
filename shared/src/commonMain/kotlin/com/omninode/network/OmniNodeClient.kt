@@ -80,8 +80,28 @@ class OmniNodeClient(
         return response.body()
     }
 
-    suspend fun fetchPeerNodeState(host: String, port: Int): PeerNodeState {
-        return kotlinx.coroutines.withTimeout(PEER_STATE_TIMEOUT_MS) {
+    suspend fun fetchPeerNodeState(
+        host: String,
+        port: Int,
+        timeoutMs: Long = PEER_STATE_TIMEOUT_MS
+    ): PeerNodeState {
+        val ktorState = runCatching {
+            kotlinx.coroutines.withTimeout(timeoutMs) {
+                val response = client.get("http://$host:$port/api/v1/identity")
+                if (!response.status.isSuccess()) {
+                    error("Peer state fetch failed (${response.status})")
+                }
+                response.body<PeerNodeState>()
+            }
+        }.getOrNull()
+        if (ktorState != null) {
+            return ktorState
+        }
+        val bound = peerHttpGet(host, port, "/api/v1/identity", timeoutMs)
+        if (bound != null && bound.statusCode in 200..299) {
+            return json.decodeFromString(PeerNodeState.serializer(), bound.body)
+        }
+        return kotlinx.coroutines.withTimeout(timeoutMs) {
             val response = client.get("http://$host:$port/api/v1/identity")
             if (!response.status.isSuccess()) {
                 error("Peer state fetch failed (${response.status})")
@@ -125,12 +145,36 @@ class OmniNodeClient(
         rememberSessionPin(host, port, trimmed)
     }
 
-    /** On-demand liveness probe for browse/transfer actions only — not used for idle polling. */
-    suspend fun pingHealth(host: String, port: Int): Boolean {
+    /** On-demand liveness probe for cold-launch sweep, browse, and transfer actions — not idle polling. */
+    suspend fun pingHealth(
+        host: String,
+        port: Int,
+        timeoutMs: Long = HEALTH_PROBE_TIMEOUT_MS
+    ): Boolean {
+        if (pingHealthUnbound(host, port, timeoutMs)) {
+            return true
+        }
+        val boundHealth = peerHttpGet(host, port, "/api/v1/health", timeoutMs)
+        if (boundHealth != null && boundHealth.statusCode in 200..299) {
+            return true
+        }
+        val boundHeartbeat = peerHttpGet(host, port, "/api/v1/heartbeat", timeoutMs)
+        return boundHeartbeat != null && boundHeartbeat.statusCode in 200..299
+    }
+
+    private suspend fun pingHealthUnbound(
+        host: String,
+        port: Int,
+        timeoutMs: Long
+    ): Boolean {
         return runCatching {
-            kotlinx.coroutines.withTimeout(HEALTH_PROBE_TIMEOUT_MS) {
-                val response = client.get("http://$host:$port/api/v1/health")
-                response.status.isSuccess()
+            kotlinx.coroutines.withTimeout(timeoutMs) {
+                val health = client.get("http://$host:$port/api/v1/health")
+                if (health.status.isSuccess()) {
+                    return@withTimeout true
+                }
+                val heartbeat = client.get("http://$host:$port/api/v1/heartbeat")
+                heartbeat.status.isSuccess()
             }
         }.getOrDefault(false)
     }
@@ -185,6 +229,30 @@ class OmniNodeClient(
         port: Int,
         request: ClusterSyncRequest
     ) {
+        val ktorSucceeded = runCatching {
+            val response = client.post("http://$host:$port/api/v1/devices/merge") {
+                contentType(ContentType.Application.Json)
+                setBody(request)
+            }
+            if (!response.status.isSuccess()) {
+                error("Cluster sync failed (${response.status})")
+            }
+        }.isSuccess
+        if (ktorSucceeded) {
+            return
+        }
+        val payload = json.encodeToString(ClusterSyncRequest.serializer(), request)
+        val bound = peerHttpPost(
+            host = host,
+            port = port,
+            path = "/api/v1/devices/merge",
+            body = payload,
+            contentType = "application/json",
+            timeoutMs = CLUSTER_SYNC_TIMEOUT_MS
+        )
+        if (bound != null && bound.statusCode in 200..299) {
+            return
+        }
         val response = client.post("http://$host:$port/api/v1/devices/merge") {
             contentType(ContentType.Application.Json)
             setBody(request)
@@ -389,6 +457,7 @@ class OmniNodeClient(
         private const val HEALTH_PROBE_TIMEOUT_MS = 5_000L
         private const val PEER_STATE_TIMEOUT_MS = 5_000L
         private const val DIAGNOSTICS_TIMEOUT_MS = 15_000L
+        private const val CLUSTER_SYNC_TIMEOUT_MS = 15_000L
     }
 }
 

@@ -9,6 +9,7 @@ import com.omninode.data.identity.LocalDeviceNameStore
 import com.omninode.di.OmniNodeServices
 import com.omninode.domain.diagnostics.PeerDeviceDiagnostics
 import com.omninode.domain.pairing.PairingPayload
+import com.omninode.domain.presence.LanPresenceTiming
 import com.omninode.platform.purgeDirectShareTarget
 import com.omninode.util.NetworkUtils
 import com.omninode.session.DeviceSessionManager
@@ -131,46 +132,54 @@ class DevicesViewModel : ViewModel() {
     fun openDeviceOrExplain(deviceId: String, open: (BrowseTarget) -> Unit) {
         viewModelScope.launch {
             val device = repository.getDevice(deviceId) ?: return@launch
-            openDeviceOrExplain(device, open)
+            openDeviceOrExplainInternal(device, open)
         }
     }
 
     fun openDeviceOrExplain(device: PairedDeviceEntity, open: (BrowseTarget) -> Unit) {
         viewModelScope.launch {
-            _uiState.update {
-                it.copy(
-                    statusMessage = "Connecting to ${device.deviceName}…",
-                    errorMessage = null
-                )
-            }
-            val peer = repository.getDevice(device.deviceId) ?: device
-            val reached = withContext(Dispatchers.IO) {
-                presence.validatePeerOnDemand(peer)
-            }
-            val refreshed = repository.getDevice(device.deviceId) ?: peer
-            if (!reached && !presence.isDeviceOnline(refreshed)) {
-                _uiState.update {
-                    it.copy(
-                        statusMessage = "${device.deviceName} is offline — open OmniNode on that device",
-                        errorMessage = null
-                    )
-                }
-                return@launch
-            }
-            _uiState.update { it.copy(statusMessage = null) }
-            continueOpenDevice(refreshed, open)
+            openDeviceOrExplainInternal(device, open)
         }
     }
 
-    private fun continueOpenDevice(device: PairedDeviceEntity, open: (BrowseTarget) -> Unit) {
+    private suspend fun openDeviceOrExplainInternal(
+        device: PairedDeviceEntity,
+        open: (BrowseTarget) -> Unit
+    ) {
+        _uiState.update {
+            it.copy(
+                statusMessage = "Connecting to ${device.deviceName}…",
+                errorMessage = null
+            )
+        }
+        val peer = repository.getDevice(device.deviceId) ?: device
+        withContext(Dispatchers.IO) {
+            presence.validatePeerOnDemand(peer)
+        }
+        val refreshed = repository.getDevice(device.deviceId) ?: peer
+        _uiState.update { it.copy(statusMessage = null) }
+        continueOpenDeviceInternal(refreshed, open)
+    }
+
+    private suspend fun continueOpenDeviceInternal(
+        device: PairedDeviceEntity,
+        open: (BrowseTarget) -> Unit
+    ) {
         if (DeviceSessionManager.isSessionValid(device.deviceId)) {
             DeviceSessionManager.markDeviceAccessed(device.deviceId)
             open(browseTargetFor(device, pinRequired = true))
             return
         }
-        viewModelScope.launch {
-            runCatching {
-                val remote = OmniNodeServices.client.fetchPeerNodeState(device.lastKnownIp, device.port)
+        runCatching {
+            withContext(Dispatchers.IO) {
+                OmniNodeServices.client.fetchPeerNodeState(
+                    device.lastKnownIp,
+                    device.port,
+                    LanPresenceTiming.ON_DEMAND_HEALTH_TIMEOUT_MS
+                )
+            }
+        }.fold(
+            onSuccess = { remote ->
                 if (remote.pinRequired) {
                     pendingOpenAction = open
                     val name = remote.deviceName.ifBlank { device.deviceName }
@@ -180,15 +189,17 @@ class DevicesViewModel : ViewModel() {
                             statusMessage = "Enter PIN for $name"
                         )
                     }
-                    return@launch
+                } else {
+                    open(browseTargetFor(device, pinRequired = false))
                 }
+            },
+            onFailure = { error ->
                 open(browseTargetFor(device, pinRequired = false))
-            }.onFailure { error ->
                 _uiState.update {
                     it.copy(errorMessage = error.message ?: "Could not reach ${device.deviceName}")
                 }
             }
-        }
+        )
     }
 
     /**
@@ -292,8 +303,10 @@ class DevicesViewModel : ViewModel() {
             repository.applyPeerNodeState(state, rosterDeviceId = payload.deviceId)
         }
 
-        val scannerHost = NetworkUtils.lanIpv4Addresses().sorted().firstOrNull()
-            ?: error("No LAN IPv4 address available for reverse pairing")
+        val scannerHost = NetworkUtils.preferredLanIpv4()
+        if (!NetworkUtils.isUsableLanIpv4(scannerHost)) {
+            error("No LAN IPv4 address available for reverse pairing")
+        }
         val scannerEntity = PairedDeviceEntity(
             deviceId = identity.deviceId,
             deviceName = identity.deviceName,

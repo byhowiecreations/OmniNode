@@ -1,5 +1,6 @@
 # Built artifacts
 /.gradle/
+/gradle.properties
 **/build/
 /current/
 /local.properties

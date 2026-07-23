@@ -8,6 +8,7 @@ import java.net.MulticastSocket
 import java.net.NetworkInterface
 
 internal actual fun openWakeListenerSocket(onLog: (String) -> Unit): DatagramSocket? {
+    openWakeListenerOnPrimaryInterface(onLog)?.let { return it }
     return runCatching {
         MulticastSocket(null).apply {
             reuseAddress = true
