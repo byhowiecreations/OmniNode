@@ -6,7 +6,8 @@
 /local.properties
 /.build-jdk/
 /secret.properties
-# Firebase Admin SDK service account — local only, never commit
+# Firebase / Google cloud config — local only, never commit
+composeApp/google-services.json
 *-firebase-adminsdk-*.json
 *firebase-adminsdk*.json
 *.iml

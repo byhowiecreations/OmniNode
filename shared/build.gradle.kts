@@ -121,21 +121,28 @@ room3 {
 
 val generateDesktopCloudConfig = tasks.register("generateDesktopCloudConfig") {
     val outDir = layout.buildDirectory.dir("generated/desktopCloud/kotlin")
+    val webClientId = providers.gradleProperty("omninode.google.web.client.id").orElse("")
     val webClientSecret = providers.gradleProperty("omninode.google.web.client.secret").orElse("")
+    val firebaseApiKey = providers.gradleProperty("omninode.firebase.api.key").orElse("")
+    val firebaseProjectId = providers.gradleProperty("omninode.firebase.project.id").orElse("")
+    inputs.property("webClientId", webClientId)
     inputs.property("webClientSecret", webClientSecret)
+    inputs.property("firebaseApiKey", firebaseApiKey)
+    inputs.property("firebaseProjectId", firebaseProjectId)
     outputs.dir(outDir)
     doLast {
-        val secret = webClientSecret.get()
-        val escapedSecret = secret.replace("\\", "\\\\").replace("\"", "\\\"")
         val dir = outDir.get().asFile.resolve("com/omninode/cloud")
         dir.mkdirs()
         dir.resolve("GeneratedDesktopCloudConfig.kt").writeText(
             """
             |package com.omninode.cloud
             |
-            |/** Generated from gradle.properties — do not edit. */
+            |/** Generated from gradle.properties — do not edit or commit. */
             |internal object GeneratedDesktopCloudConfig {
-            |    const val WEB_CLIENT_SECRET = "$escapedSecret"
+            |    const val WEB_CLIENT_ID = "${escapeKotlinString(webClientId.get())}"
+            |    const val WEB_CLIENT_SECRET = "${escapeKotlinString(webClientSecret.get())}"
+            |    const val FIREBASE_API_KEY = "${escapeKotlinString(firebaseApiKey.get())}"
+            |    const val FIREBASE_PROJECT_ID = "${escapeKotlinString(firebaseProjectId.get())}"
             |}
             """.trimMargin()
         )

@@ -114,7 +114,7 @@ object DesktopAuthCoordinator {
 }
 
 actual fun googleWebClientId(): String =
-    DesktopCloudIds.WEB_CLIENT_ID.ifBlank {
+    GeneratedDesktopCloudConfig.WEB_CLIENT_ID.trim().ifBlank {
         System.getProperty("omninode.google.web.client.id").orEmpty()
     }
 
@@ -124,16 +124,13 @@ internal fun googleWebClientSecret(): String =
     }
 
 actual fun firebaseApiKey(): String =
-    DesktopCloudIds.API_KEY.ifBlank {
-        System.getProperty("omninode.firebase.api.key") ?: DEFAULT_API_KEY
+    GeneratedDesktopCloudConfig.FIREBASE_API_KEY.trim().ifBlank {
+        System.getProperty("omninode.firebase.api.key").orEmpty()
     }
 
 actual fun firebaseProjectId(): String =
-    DesktopCloudIds.PROJECT_ID.ifBlank {
-        System.getProperty("omninode.firebase.project.id") ?: DEFAULT_PROJECT_ID
+    GeneratedDesktopCloudConfig.FIREBASE_PROJECT_ID.trim().ifBlank {
+        System.getProperty("omninode.firebase.project.id").orEmpty()
     }
 
 actual fun currentPlatformLabel(): String = "desktop"
-
-private const val DEFAULT_API_KEY = "REDACTED_FIREBASE_API_KEY"
-private const val DEFAULT_PROJECT_ID = "omninode-502915"

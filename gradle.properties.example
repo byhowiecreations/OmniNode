@@ -1,0 +1,29 @@
+# Copy to gradle.properties (gitignored) and fill in real values.
+# NEVER commit gradle.properties — it contains secrets.
+
+omninode.version.name=0.0.0
+omninode.version.code=1
+
+# Google OAuth Web client (Google Cloud Console → Credentials → Web client)
+omninode.google.web.client.id=YOUR_WEB_CLIENT_ID.apps.googleusercontent.com
+omninode.google.web.client.secret=GOCSPX-YOUR_WEB_CLIENT_SECRET
+
+# Firebase client config (Firebase Console → Project settings → Your apps → Android)
+omninode.firebase.project.id=your-firebase-project-id
+omninode.firebase.api.key=YOUR_FIREBASE_API_KEY
+omninode.firebase.application.id=1:YOUR_PROJECT_NUMBER:android:YOUR_APP_HASH
+
+# Firebase Admin SDK service account JSON filename (project root, gitignored)
+omninode.firebase.service.account.json=your-project-firebase-adminsdk-xxxxx.json
+
+org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
+org.gradle.parallel=true
+org.gradle.caching=true
+
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+kotlin.code.style=official
+kotlin.mpp.androidSourceSetLayoutVersion=2
+org.jetbrains.compose.experimental.jscanvas.enabled=false
+
+org.gradle.java.home=.build-jdk/jdk-21.0.11+10/Contents/Home

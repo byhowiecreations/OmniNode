@@ -450,6 +450,81 @@ tasks.register("copyReleaseBuilds") {
     }
 }
 
+fun escapeJsonString(value: String): String =
+    value.replace("\\", "\\\\").replace("\"", "\\\"")
+
+/**
+ * Writes `google-services.json` from gitignored `gradle.properties` before the Google Services plugin runs.
+ * The output file is gitignored — never commit real credentials.
+ */
+val generateGoogleServicesJson = tasks.register("generateGoogleServicesJson") {
+    group = "build setup"
+    description = "Generate composeApp/google-services.json from local gradle.properties"
+    val projectId = providers.gradleProperty("omninode.firebase.project.id").orElse("")
+    val apiKey = providers.gradleProperty("omninode.firebase.api.key").orElse("")
+    val applicationId = providers.gradleProperty("omninode.firebase.application.id").orElse("")
+    inputs.property("projectId", projectId)
+    inputs.property("apiKey", apiKey)
+    inputs.property("applicationId", applicationId)
+    val outFile = layout.projectDirectory.file("google-services.json")
+    outputs.file(outFile)
+    doLast {
+        val appId = applicationId.get().trim()
+        val pid = projectId.get().trim()
+        val key = apiKey.get().trim()
+        require(pid.isNotEmpty() && key.isNotEmpty() && appId.isNotEmpty()) {
+            "Set omninode.firebase.project.id, omninode.firebase.api.key, and " +
+                "omninode.firebase.application.id in gradle.properties (see gradle.properties.example)"
+        }
+        val projectNumber = appId.split(":").getOrNull(1)
+            ?: error(
+                "Invalid omninode.firebase.application.id — expected format " +
+                    "1:<project_number>:android:<app_hash>"
+            )
+        outFile.asFile.writeText(
+            """
+            |{
+            |  "project_info": {
+            |    "project_number": "$projectNumber",
+            |    "project_id": "${escapeJsonString(pid)}",
+            |    "storage_bucket": "${escapeJsonString(pid)}.firebasestorage.app"
+            |  },
+            |  "client": [
+            |    {
+            |      "client_info": {
+            |        "mobilesdk_app_id": "${escapeJsonString(appId)}",
+            |        "android_client_info": {
+            |          "package_name": "com.omninode"
+            |        }
+            |      },
+            |      "oauth_client": [],
+            |      "api_key": [
+            |        {
+            |          "current_key": "${escapeJsonString(key)}"
+            |        }
+            |      ],
+            |      "services": {
+            |        "appinvite_service": {
+            |          "other_platform_oauth_client": []
+            |        }
+            |      }
+            |    }
+            |  ],
+            |  "configuration_version": "1"
+            |}
+            """.trimMargin()
+        )
+    }
+}
+
+tasks.matching { it.name == "preBuild" }.configureEach {
+    dependsOn(generateGoogleServicesJson)
+}
+
+tasks.matching { it.name.startsWith("process") && it.name.endsWith("GoogleServices") }.configureEach {
+    dependsOn(generateGoogleServicesJson)
+}
+
 /**
  * Full ship after [assembleDebug] + [assembleRelease]: all APKs, .app, and DMG into `current/`.
  * Does not mount the DMG.
