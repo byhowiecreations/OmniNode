@@ -55,6 +55,10 @@ object GoogleLinkCoordinator {
     @Volatile
     private var lastCloudRegistryIds: Set<String> = emptySet()
 
+    /** Cached cloud device rows for FCM wake target resolution. */
+    @Volatile
+    private var cachedCloudRecords: List<CloudDeviceRecord> = emptyList()
+
     /** Last presence successfully published (network fields only; ignores updatedAt). */
     @Volatile
     private var lastPublishedPresence: CloudDevicePresence? = null
@@ -85,6 +89,38 @@ object GoogleLinkCoordinator {
             .onFailure { error ->
                 println("GoogleLinkCoordinator: presence publish failed — ${error.message}")
             }
+    }
+
+    /** Clears dedupe cache so the next publish runs after LAN/network transitions. */
+    fun invalidatePublishedPresenceCache() {
+        lastPublishedPresence = null
+    }
+
+    /** FCM wake targets — cloud-linked Android peers with a registered token. */
+    fun linkedPeerFcmTargets(selfDeviceId: String): List<FcmWakeTarget> =
+        cachedCloudRecords.asSequence()
+            .filter { record ->
+                record.deviceId.isNotBlank() &&
+                    record.deviceId != selfDeviceId &&
+                    record.platform.equals("android", ignoreCase = true) &&
+                    record.fcmToken.isNotBlank()
+            }
+            .map { record -> FcmWakeTarget(record.deviceId, record.fcmToken) }
+            .toList()
+
+    /** Registers/refreshes this device's FCM token in Firestore when cloud-linked. */
+    suspend fun patchSelfFcmToken(fcmToken: String) {
+        val trimmed = fcmToken.trim()
+        if (trimmed.isEmpty()) return
+        if (!OmniNodeServices.settings.googleAccountLinkEnabled.value) return
+        if (!cloudOpsActive) return
+        val uid = OmniNodeServices.settings.googleAccountUid.value
+        if (uid.isBlank()) return
+        runCatching {
+            CloudAuthBackend.patchDeviceFcmToken(uid, loadLocalIdentity().deviceId, trimmed)
+        }.onFailure { error ->
+            println("GoogleLinkCoordinator: FCM token patch failed — ${error.message}")
+        }
     }
 
     /**
@@ -187,6 +223,7 @@ object GoogleLinkCoordinator {
         cloudOpsActive = false
         lastPublishedPresence = null
         lastCloudRegistryIds = emptySet()
+        cachedCloudRecords = emptyList()
 
         val previousHandle = registryHandle
         registryHandle = null
@@ -309,6 +346,7 @@ object GoogleLinkCoordinator {
         applyMutex.withLock {
             if (!isSessionLive(epoch)) return
             val repo = OmniNodeServices.deviceRepositoryOrNull() ?: return
+            cachedCloudRecords = records
             val remoteIds = records.map { it.deviceId }.filter { it.isNotBlank() }.toSet()
             if (lastCloudRegistryIds.isNotEmpty()) {
                 val removedFromCloud = lastCloudRegistryIds - remoteIds - selfId

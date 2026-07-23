@@ -6,6 +6,9 @@
 /local.properties
 /.build-jdk/
 /secret.properties
+# Firebase Admin SDK service account — local only, never commit
+*-firebase-adminsdk-*.json
+*firebase-adminsdk*.json
 *.iml
 .idea/
 .DS_Store

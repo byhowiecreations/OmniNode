@@ -1,5 +1,6 @@
 package com.omninode.domain.presence
 
+import com.omninode.cloud.FcmWakeCoordinator
 import com.omninode.cloud.GoogleLinkCoordinator
 import com.omninode.data.db.PairedDeviceEntity
 import com.omninode.data.device.DeviceRepository
@@ -116,7 +117,69 @@ class PeerPresenceMonitor(
         }
     }
 
-    private suspend fun runPeerRefreshSweep() {
+    /** FCM silent data wake — targeted health probe without full discovery budget. */
+    fun onBackgroundWakeSignal(sourceDeviceId: String?) {
+        if (!OmniNodeServices.isDatabaseReady()) return
+        scope.launch {
+            runCatching {
+                onBackgroundWakeSignalInternal(sourceDeviceId)
+            }.onFailure { error ->
+                println("PeerPresenceMonitor: background wake failed — ${error.message}")
+            }
+        }
+    }
+
+    /** Event-driven single-shot revalidation after LAN/network transitions. */
+    suspend fun runSingleShotRevalidation() {
+        runPeerRefreshSweep(skipFcmDispatch = true)
+    }
+
+    /** mDNS service announcement — update stored endpoint and run a targeted health check. */
+    fun onMdnsPeerDiscovered(host: String, port: Int, hintedDeviceId: String?) {
+        if (!OmniNodeServices.isDatabaseReady()) return
+        scope.launch {
+            runCatching {
+                handleMdnsPeerDiscovered(host, port, hintedDeviceId)
+            }.onFailure { error ->
+                println("PeerPresenceMonitor: mDNS discovery failed — ${error.message}")
+            }
+        }
+    }
+
+    private suspend fun onBackgroundWakeSignalInternal(sourceDeviceId: String?) {
+        awaitShareServerReady()
+        val trimmedSource = sourceDeviceId?.trim().orEmpty()
+        if (trimmedSource.isNotEmpty()) {
+            val peer = mutex.withLock { repository.getDevice(trimmedSource) }
+            if (peer != null) {
+                primePeer(peer, includeDiscovery = false, allowPassiveWait = false)
+                refreshOnlineSnapshot()
+                return
+            }
+        }
+        runPeerRefreshSweep(skipFcmDispatch = true)
+    }
+
+    private suspend fun handleMdnsPeerDiscovered(host: String, port: Int, hintedDeviceId: String?) {
+        val hint = hintedDeviceId?.trim().orEmpty()
+        val peer = when {
+            hint.isNotEmpty() -> mutex.withLock { repository.getDevice(hint) }
+            else -> mutex.withLock {
+                repository.listDevices().firstOrNull { device ->
+                    device.lastKnownIp.trim() == host.trim()
+                }
+            }
+        } ?: return
+
+        mutex.withLock {
+            repository.touchPeerLastSeen(peer.deviceId, host, port)
+        }
+        val refreshed = mutex.withLock { repository.getDevice(peer.deviceId) } ?: peer
+        primePeer(refreshed, includeDiscovery = false, allowPassiveWait = false)
+        refreshOnlineSnapshot()
+    }
+
+    private suspend fun runPeerRefreshSweep(skipFcmDispatch: Boolean = false) {
         awaitShareServerReady()
         val peers = mutex.withLock { repository.listDevices() }
         runCatching { sendWakeBroadcast() }
@@ -127,6 +190,9 @@ class PeerPresenceMonitor(
         runCatching { OmniNodeServices.pairingCoordinator.broadcastSelfIdentity() }
         refreshOnlineSnapshot()
         runCatching { GoogleLinkCoordinator.publishSelfPresenceIfLinked() }
+        if (!skipFcmDispatch) {
+            FcmWakeCoordinator.dispatchPresenceWakeToLinkedPeers()
+        }
     }
 
     private suspend fun awaitShareServerReady() {

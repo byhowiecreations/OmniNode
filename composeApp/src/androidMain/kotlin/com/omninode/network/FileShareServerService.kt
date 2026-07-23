@@ -16,6 +16,7 @@ import androidx.core.app.NotificationManagerCompat
 import com.omninode.MainActivity
 import com.omninode.R
 import com.omninode.data.identity.LocalIdentity
+import com.omninode.domain.presence.PresenceBackgroundWake
 import com.omninode.platform.ServiceWatchdog
 import com.omninode.platform.ServiceWatchdogScheduler
 import com.omninode.platform.ServiceWatchdogState
@@ -262,6 +263,7 @@ class FileShareServerService : Service() {
         val receiver = UdpWakeReceiver(
             onWakeAccepted = {
                 ServerLifecycleManager.ensureRunning(androidLog)
+                PresenceBackgroundWake.onRemoteWakeSignal(sourceDeviceId = null)
             },
             onLog = { message -> Log.i(TAG, message) }
         )

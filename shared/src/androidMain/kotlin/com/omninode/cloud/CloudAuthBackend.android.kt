@@ -99,6 +99,16 @@ actual object CloudAuthBackend {
         deviceDoc(uid, deviceId).delete().await()
     }
 
+    actual suspend fun patchDeviceFcmToken(uid: String, deviceId: String, fcmToken: String) {
+        val fields = mapOf("fcmToken" to fcmToken.trim())
+        val ref = deviceDoc(uid, deviceId)
+        runCatching {
+            ref.update(fields).await()
+        }.onFailure {
+            ref.set(fields, SetOptions.merge()).await()
+        }
+    }
+
     actual fun observeUserDevices(
         uid: String,
         onDevices: (List<CloudDeviceRecord>) -> Unit,
@@ -135,7 +145,8 @@ actual object CloudAuthBackend {
                         platform = doc.getString("platform").orEmpty(),
                         clientVersion = doc.getString("clientVersion").orEmpty(),
                         clientVersionCode = (doc.getLong("clientVersionCode") ?: 0L).toInt(),
-                        updatedAtEpochMs = doc.getLong("updatedAtEpochMs") ?: 0L
+                        updatedAtEpochMs = doc.getLong("updatedAtEpochMs") ?: 0L,
+                        fcmToken = doc.getString("fcmToken").orEmpty()
                     )
                 }
                 if (!state.stopped) {

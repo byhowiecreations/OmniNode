@@ -231,6 +231,29 @@ actual object CloudAuthBackend {
         }
     }
 
+    actual suspend fun patchDeviceFcmToken(uid: String, deviceId: String, fcmToken: String) {
+        val token = requireIdToken()
+        val project = firebaseProjectId()
+        val parent =
+            "https://firestore.googleapis.com/v1/projects/$project/databases/(default)/documents/" +
+                "users/$uid/devices"
+        val body = buildJsonObject {
+            put(
+                "fields",
+                buildJsonObject {
+                    put("fcmToken", buildJsonObject { put("stringValue", fcmToken.trim()) })
+                }
+            )
+        }
+        patchOrCreateDocument(
+            token = token,
+            parent = parent,
+            deviceId = deviceId,
+            body = body,
+            fieldPaths = listOf("fcmToken")
+        )
+    }
+
     actual fun observeUserDevices(
         uid: String,
         onDevices: (List<CloudDeviceRecord>) -> Unit,
@@ -274,7 +297,8 @@ actual object CloudAuthBackend {
                                 platform = stringField(fields, "platform").orEmpty(),
                                 clientVersion = stringField(fields, "clientVersion").orEmpty(),
                                 clientVersionCode = integerField(fields, "clientVersionCode")?.toInt() ?: 0,
-                                updatedAtEpochMs = integerField(fields, "updatedAtEpochMs") ?: 0L
+                                updatedAtEpochMs = integerField(fields, "updatedAtEpochMs") ?: 0L,
+                                fcmToken = stringField(fields, "fcmToken").orEmpty()
                             )
                         }
                         if (!state.stopped) {

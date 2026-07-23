@@ -1,6 +1,7 @@
 package com.omninode.network
 
 import com.omninode.di.OmniNodeServices
+import com.omninode.domain.presence.PresenceBackgroundWake
 import com.omninode.domain.presence.PresenceForegroundRefresh
 
 /**
@@ -32,6 +33,7 @@ object DesktopShareServerController {
         if (wakeReceiver != null) return
         wakeReceiver = UdpWakeReceiver(
             onWakeAccepted = {
+                PresenceBackgroundWake.onRemoteWakeSignal(sourceDeviceId = null)
                 PresenceForegroundRefresh.onAppForegrounded()
             },
             onLog = { message -> println("DesktopShareServer: $message") }

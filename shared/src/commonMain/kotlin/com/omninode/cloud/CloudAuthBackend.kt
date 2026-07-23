@@ -30,6 +30,9 @@ expect object CloudAuthBackend {
 
     suspend fun deleteDevice(uid: String, deviceId: String)
 
+    /** Patches the Android FCM token for silent background wake — never touches [deviceName]. */
+    suspend fun patchDeviceFcmToken(uid: String, deviceId: String, fcmToken: String)
+
     /**
      * Start listening / polling the user device collection (includes this device’s document).
      * Remote snapshots seed peer devices into the local repository.

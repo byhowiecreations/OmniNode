@@ -2,6 +2,7 @@ package com.omninode.network
 
 import com.omninode.data.identity.loadLocalIdentity
 import com.omninode.di.OmniNodeServices
+import com.omninode.domain.presence.BackgroundPresenceServices
 
 /**
  * Process-wide OmniNode share-server lifecycle.
@@ -36,6 +37,9 @@ object ServerLifecycleManager {
     private fun ensureRunningLocked(onLog: (String, Throwable?) -> Unit) {
         val current = serverInstance
         if (current != null && current.isRunning) {
+            val identity = loadLocalIdentity()
+            BackgroundPresenceServices.onShareServerStarted(identity.sharePort, identity.deviceId)
+            BackgroundPresenceServices.start()
             return
         }
         runCatching { current?.stop() }
@@ -54,6 +58,8 @@ object ServerLifecycleManager {
             },
             onLog = onLog
         ).also { it.start() }
+        BackgroundPresenceServices.onShareServerStarted(identity.sharePort, identity.deviceId)
+        BackgroundPresenceServices.start()
         OmniNodeServices.presenceMonitor.scheduleColdLaunchProbeOnce()
         onLog(
             "Share server ensured running on port ${identity.sharePort} " +
@@ -63,6 +69,7 @@ object ServerLifecycleManager {
     }
 
     private fun stopLocked(onLog: (String, Throwable?) -> Unit) {
+        BackgroundPresenceServices.stop()
         val current = serverInstance
         serverInstance = null
         if (current != null) {

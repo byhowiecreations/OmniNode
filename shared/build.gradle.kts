@@ -1,3 +1,4 @@
+import groovy.json.JsonSlurper
 import org.jetbrains.kotlin.gradle.dsl.JvmTarget
 import org.jetbrains.kotlin.gradle.tasks.KotlinCompilationTask
 
@@ -27,6 +28,7 @@ kotlin {
     sourceSets {
         val commonMain by getting {
             kotlin.srcDir(layout.buildDirectory.dir("generated/omninodeAppVersion/kotlin"))
+            kotlin.srcDir(layout.buildDirectory.dir("generated/fcmCredentials/kotlin"))
         }
 
         commonMain.dependencies {
@@ -69,6 +71,7 @@ kotlin {
             implementation(project.dependencies.platform(libs.firebase.bom))
             implementation(libs.firebase.auth)
             implementation(libs.firebase.firestore)
+            implementation(libs.firebase.messaging)
             implementation(libs.androidx.credentials)
             implementation(libs.androidx.credentials.play.services)
             implementation(libs.googleid)
@@ -81,6 +84,7 @@ kotlin {
                 implementation(compose.desktop.currentOs)
                 implementation(libs.kotlinx.coroutines.swing)
                 implementation(libs.jna)
+                implementation(libs.jmdns)
             }
         }
     }
@@ -122,7 +126,7 @@ val generateDesktopCloudConfig = tasks.register("generateDesktopCloudConfig") {
     outputs.dir(outDir)
     doLast {
         val secret = webClientSecret.get()
-        val escaped = secret.replace("\\", "\\\\").replace("\"", "\\\"")
+        val escapedSecret = secret.replace("\\", "\\\\").replace("\"", "\\\"")
         val dir = outDir.get().asFile.resolve("com/omninode/cloud")
         dir.mkdirs()
         dir.resolve("GeneratedDesktopCloudConfig.kt").writeText(
@@ -131,7 +135,74 @@ val generateDesktopCloudConfig = tasks.register("generateDesktopCloudConfig") {
             |
             |/** Generated from gradle.properties — do not edit. */
             |internal object GeneratedDesktopCloudConfig {
-            |    const val WEB_CLIENT_SECRET = "$escaped"
+            |    const val WEB_CLIENT_SECRET = "$escapedSecret"
+            |}
+            """.trimMargin()
+        )
+    }
+}
+
+fun escapeKotlinString(value: String): String =
+    value.replace("\\", "\\\\").replace("\"", "\\\"").replace("\r", "").replace("\n", "\\n")
+
+fun resolveFirebaseServiceAccountJson(rootDir: java.io.File, explicitPath: String): java.io.File? {
+    if (explicitPath.isNotBlank()) {
+        val configured = rootDir.resolve(explicitPath)
+        if (configured.isFile) return configured
+    }
+    return rootDir.listFiles()
+        ?.firstOrNull { file -> file.isFile && file.name.contains("firebase-adminsdk") && file.name.endsWith(".json") }
+}
+
+val generateFcmCredentials = tasks.register("generateFcmCredentials") {
+    val outDir = layout.buildDirectory.dir("generated/fcmCredentials/kotlin")
+    val jsonPath = providers.gradleProperty("omninode.firebase.service.account.json").orElse("")
+    inputs.property("jsonPath", jsonPath)
+    outputs.dir(outDir)
+    doLast {
+        val dir = outDir.get().asFile.resolve("com/omninode/cloud")
+        dir.mkdirs()
+        val jsonFile = resolveFirebaseServiceAccountJson(rootProject.projectDir, jsonPath.get())
+        if (jsonFile == null) {
+            dir.resolve("GeneratedFcmCredentials.kt").writeText(
+                """
+                |package com.omninode.cloud
+                |
+                |/** Generated at build time — credentials empty when service account JSON is missing. */
+                |internal object GeneratedFcmCredentials {
+                |    const val PROJECT_ID = ""
+                |    const val CLIENT_EMAIL = ""
+                |    const val PRIVATE_KEY_PEM = ""
+                |}
+                |
+                |internal fun GeneratedFcmCredentials.toConfig(): FcmServiceAccountConfig? = null
+                """.trimMargin()
+            )
+            return@doLast
+        }
+        @Suppress("UNCHECKED_CAST")
+        val json = JsonSlurper().parseText(jsonFile.readText()) as Map<String, Any?>
+        val projectId = json["project_id"]?.toString().orEmpty()
+        val clientEmail = json["client_email"]?.toString().orEmpty()
+        val privateKey = json["private_key"]?.toString().orEmpty()
+        dir.resolve("GeneratedFcmCredentials.kt").writeText(
+            """
+            |package com.omninode.cloud
+            |
+            |/** Generated from local Firebase Admin SDK JSON — never commit this file. */
+            |internal object GeneratedFcmCredentials {
+            |    const val PROJECT_ID = "${escapeKotlinString(projectId)}"
+            |    const val CLIENT_EMAIL = "${escapeKotlinString(clientEmail)}"
+            |    const val PRIVATE_KEY_PEM = "${escapeKotlinString(privateKey)}"
+            |}
+            |
+            |internal fun GeneratedFcmCredentials.toConfig(): FcmServiceAccountConfig? {
+            |    if (PROJECT_ID.isBlank() || CLIENT_EMAIL.isBlank() || PRIVATE_KEY_PEM.isBlank()) return null
+            |    return FcmServiceAccountConfig(
+            |        projectId = PROJECT_ID,
+            |        clientEmail = CLIENT_EMAIL,
+            |        privateKeyPem = PRIVATE_KEY_PEM
+            |    )
             |}
             """.trimMargin()
         )
@@ -169,10 +240,10 @@ val generateOmniNodeAppVersion = tasks.register("generateOmniNodeAppVersion") {
 }
 
 tasks.withType<KotlinCompilationTask<*>>().configureEach {
-    dependsOn(generateOmniNodeAppVersion, generateDesktopCloudConfig)
+    dependsOn(generateOmniNodeAppVersion, generateDesktopCloudConfig, generateFcmCredentials)
 }
 
 tasks.matching { it.name.startsWith("ksp") }.configureEach {
-    dependsOn(generateOmniNodeAppVersion, generateDesktopCloudConfig)
+    dependsOn(generateOmniNodeAppVersion, generateDesktopCloudConfig, generateFcmCredentials)
 }
 

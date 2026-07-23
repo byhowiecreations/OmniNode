@@ -14,7 +14,9 @@ data class CloudDeviceRecord(
     val platform: String,
     val clientVersion: String,
     val clientVersionCode: Int,
-    val updatedAtEpochMs: Long
+    val updatedAtEpochMs: Long,
+    /** Android FCM registration token for silent background wake (Path A). */
+    val fcmToken: String = ""
 )
 
 /**
