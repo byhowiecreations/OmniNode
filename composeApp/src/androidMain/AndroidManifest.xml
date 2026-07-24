@@ -107,6 +107,11 @@
             android:foregroundServiceType="connectedDevice|dataSync" />
 
         <service
+            android:name="com.fileapex.platform.ShareServerKeepAliveJobService"
+            android:exported="false"
+            android:permission="android.permission.BIND_JOB_SERVICE" />
+
+        <service
             android:name="com.fileapex.cloud.FileApexFcmMessagingService"
             android:exported="false">
             <intent-filter>

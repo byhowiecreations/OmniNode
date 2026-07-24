@@ -26,7 +26,11 @@ object ServiceWatchdogScheduler {
     private const val KEY_SHARE_SERVER_HEARTBEAT_EPOCH_MS = "share_server_heartbeat_epoch_ms"
 
     fun scheduleNext(context: Context) {
-        scheduleAt(context, TimeUtils.nextAlarmEpochMs(), TimeUtils.SERVICE_WATCHDOG_ALARM_INTERVAL_MS)
+        scheduleAt(
+            context,
+            TimeUtils.nextAlarmEpochMs(ShareServerKeepAliveCoordinator.effectiveWatchdogAlarmIntervalMs()),
+            ShareServerKeepAliveCoordinator.effectiveWatchdogAlarmIntervalMs()
+        )
     }
 
     fun scheduleImmediate(context: Context) {

@@ -68,8 +68,10 @@ actual object ServiceWatchdog {
         ServiceWatchdogScheduler.syncWatchdogEnabledMirror(context, enabled)
         if (enabled) {
             ServiceWatchdogScheduler.scheduleNext(context)
+            ShareServerKeepAliveCoordinator.scheduleJobIfNeeded(context)
         } else {
             ServiceWatchdogScheduler.cancel(context)
+            ShareServerKeepAliveCoordinator.cancelJobIfNeeded(context)
         }
     }
 }

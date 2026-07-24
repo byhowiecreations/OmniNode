@@ -20,6 +20,7 @@ import com.fileapex.domain.presence.PresenceBackgroundWake
 import com.fileapex.platform.ServiceWatchdog
 import com.fileapex.platform.ServiceWatchdogScheduler
 import com.fileapex.platform.ServiceWatchdogState
+import com.fileapex.platform.ShareServerKeepAliveCoordinator
 import com.fileapex.platform.ShareServerPendingStart
 import com.fileapex.platform.ShareServerRestartCoordinator
 import kotlinx.coroutines.CoroutineScope
@@ -53,7 +54,18 @@ class FileShareServerService : Service() {
 
     override fun onStartCommand(intent: Intent?, flags: Int, startId: Int): Int {
         val fromForeground = isForegroundStart(intent)
+        val reassert = intent?.action == ShareServerKeepAliveCoordinator.ACTION_REASSERT
         val stickyRestart = intent == null
+        if (reassert && isForegroundPromoted) {
+            runCatching { promoteToForeground() }
+                .onFailure { error ->
+                    Log.w(TAG, "Foreground re-assert refresh failed :: ${error.message}")
+                }
+            ensureServerRunning()
+            recordServiceHeartbeat()
+            ServiceWatchdog.scheduleNextAlarmIfEnabled()
+            return START_STICKY
+        }
         if (!isForegroundPromoted) {
             val promoted = if (fromForeground) {
                 promoteToForegroundFromUi()
@@ -66,6 +78,7 @@ class FileShareServerService : Service() {
             }
             isForegroundPromoted = true
             ShareServerPendingStart.clear(this)
+            ShareServerKeepAliveCoordinator.onForegroundServiceActive(this)
         } else if (fromForeground) {
             // Re-post after POST_NOTIFICATIONS grant (or UI reopen). First promote may have
             // succeeded while notifications were still denied, leaving no visible ongoing alert.
@@ -108,6 +121,7 @@ class FileShareServerService : Service() {
     }
 
     override fun onDestroy() {
+        ShareServerKeepAliveCoordinator.onForegroundServiceInactive(this)
         val cleanStop = ServiceWatchdogState.consumeCleanStop(this)
         val timeoutStop = ServiceWatchdogState.consumeTimeoutStop(this)
         when {
@@ -250,7 +264,7 @@ class FileShareServerService : Service() {
             .setOnlyAlertOnce(true)
             .setCategory(NotificationCompat.CATEGORY_SERVICE)
             .setVisibility(NotificationCompat.VISIBILITY_PUBLIC)
-            .setPriority(NotificationCompat.PRIORITY_LOW)
+            .setPriority(NotificationCompat.PRIORITY_HIGH)
             .setForegroundServiceBehavior(NotificationCompat.FOREGROUND_SERVICE_IMMEDIATE)
         return builder.build()
     }
@@ -285,13 +299,14 @@ class FileShareServerService : Service() {
     private fun startEngineWatchdog() {
         serviceScope.launch {
             while (isActive) {
-                delay(ENGINE_WATCHDOG_INTERVAL_MS)
+                delay(ShareServerKeepAliveCoordinator.engineWatchdogIntervalMs())
                 if (!ServerLifecycleManager.isRunning) {
                     Log.w(TAG, "Engine watchdog detected dead share server — restarting")
                     ensureServerRunning()
                 }
                 if (ServerLifecycleManager.isRunning) {
                     recordServiceHeartbeat()
+                    ShareServerKeepAliveCoordinator.renewWakeLock(this@FileShareServerService)
                 }
             }
         }
@@ -309,34 +324,36 @@ class FileShareServerService : Service() {
         if (Build.VERSION.SDK_INT < Build.VERSION_CODES.O) return
         val manager = getSystemService(NotificationManager::class.java)
         manager.deleteNotificationChannel(LEGACY_CHANNEL_ID)
+        manager.deleteNotificationChannel(LEGACY_LOW_IMPORTANCE_CHANNEL_ID)
         val existing = manager.getNotificationChannel(CHANNEL_ID)
-        if (existing == null || existing.importance < NotificationManager.IMPORTANCE_LOW) {
+        if (existing == null || existing.importance < NotificationManager.IMPORTANCE_DEFAULT) {
             if (existing != null) {
                 manager.deleteNotificationChannel(CHANNEL_ID)
             }
             val channel = NotificationChannel(
                 CHANNEL_ID,
                 "FileApex Server",
-                NotificationManager.IMPORTANCE_LOW
+                NotificationManager.IMPORTANCE_DEFAULT
             ).apply {
-                description = "Shows while the FileApex share server is running"
+                description = "Persistent alert while the FileApex share server is running"
                 setShowBadge(false)
                 lockscreenVisibility = Notification.VISIBILITY_PUBLIC
+                enableVibration(false)
                 setSound(null, null)
             }
             manager.createNotificationChannel(channel)
-            Log.i(TAG, "Created FGS notification channel $CHANNEL_ID importance=LOW")
+            Log.i(TAG, "Created FGS notification channel $CHANNEL_ID importance=DEFAULT")
         }
     }
 
     companion object {
         private const val TAG = "FileApexServerService"
-        /** New id — legacy [LEGACY_CHANNEL_ID] may be stuck at silent/min importance. */
-        private const val CHANNEL_ID = "fileapex_share_server_active"
+        /** New id — legacy channels may be stuck at silent/min importance. */
+        private const val CHANNEL_ID = "fileapex_share_server_active_v2"
+        private const val LEGACY_LOW_IMPORTANCE_CHANNEL_ID = "fileapex_share_server_active"
         private const val LEGACY_CHANNEL_ID = "FileApexServerChannel"
         private const val NOTIFICATION_ID = 1
         private const val NOTIFICATION_CONTENT_REQUEST = 1_101
-        private const val ENGINE_WATCHDOG_INTERVAL_MS = 5_000L
         const val ACTION_START = "com.fileapex.action.START_SHARE_SERVER"
         const val EXTRA_FROM_FOREGROUND = "extra_from_foreground"
         const val SERVER_PORT = LocalIdentity.DEFAULT_SHARE_PORT

@@ -29,8 +29,8 @@ import kotlinx.coroutines.sync.withLock
  * Single source of truth for cloud pairing seed → local [com.fileapex.data.device.DeviceRepository].
  *
  * [deviceName] is written to Firestore only from explicit user rename actions
- * ([publishUserRenamedDevice]). Presence fields publish on cold launch, link/restore, and
- * rename — never from a background heartbeat loop.
+ * ([publishUserRenamedDevice]). Presence fields publish on cold launch, link/restore, rename,
+ * and every [LanPresenceTiming.FIRESTORE_PRESENCE_HEARTBEAT_MS] while the share server runs.
  *
  * Session teardown always drains Firestore listeners and session coroutines before Auth sign-out
  * or before a replacement session starts (avoids Firebase/SQLite "destroyed mutex" races).
@@ -89,6 +89,24 @@ object GoogleLinkCoordinator {
             .onFailure { error ->
                 println("GoogleLinkCoordinator: presence publish failed — ${error.message}")
             }
+    }
+
+    /**
+     * Scheduled Firestore heartbeat — always refreshes `updatedAtEpochMs` even when LAN fields
+     * are unchanged so peers can show Ready/Tap to wake from cloud last_seen.
+     */
+    suspend fun publishScheduledPresenceHeartbeat() {
+        if (!FileApexServices.settings.googleAccountLinkEnabled.value) return
+        if (!cloudOpsActive) return
+        val uid = FileApexServices.settings.googleAccountUid.value
+        if (uid.isBlank()) return
+        runCatching {
+            val next = buildSelfPresence()
+            CloudAuthBackend.patchDevicePresence(uid, next)
+            lastPublishedPresence = next
+        }.onFailure { error ->
+            println("GoogleLinkCoordinator: scheduled heartbeat failed — ${error.message}")
+        }
     }
 
     /** Clears dedupe cache so the next publish runs after LAN/network transitions. */

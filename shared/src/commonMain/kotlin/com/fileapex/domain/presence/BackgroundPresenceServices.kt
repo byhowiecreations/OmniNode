@@ -1,6 +1,7 @@
 package com.fileapex.domain.presence
 
 import com.fileapex.cloud.FcmTokenRegistrar
+import com.fileapex.cloud.CloudPresenceHeartbeat
 import com.fileapex.cloud.GoogleLinkCoordinator
 import com.fileapex.data.identity.loadLocalIdentity
 import com.fileapex.di.FileApexServices
@@ -30,6 +31,7 @@ object BackgroundPresenceServices {
         }
         PresenceNetworkRevalidator.ensureRegistered()
         FcmTokenRegistrar.start()
+        CloudPresenceHeartbeat.start()
         runCatching { GoogleLinkCoordinator.invalidatePublishedPresenceCache() }
     }
 
@@ -39,6 +41,7 @@ object BackgroundPresenceServices {
         FileApexMdnsAdvertiser.stop(fast = fast)
         FileApexMdnsBrowser.stop(fast = fast)
         FcmTokenRegistrar.stop()
+        CloudPresenceHeartbeat.stop()
     }
 
     fun onShareServerStarted(port: Int, deviceId: String) {

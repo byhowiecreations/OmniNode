@@ -7,8 +7,17 @@ package com.fileapex.domain.presence
  * user taps/transfers, and inbound merge payloads.
  */
 object LanPresenceTiming {
-    /** Offline badge grace after the last successful probe or passive merge. */
-    const val OFFLINE_GRACE_MS = 360_000L
+    /** Ready badge threshold — peer last_seen within this window shows "Ready". */
+    const val PRESENCE_READY_THRESHOLD_MS = 20 * 60 * 1000L
+
+    /** @deprecated Use [PRESENCE_READY_THRESHOLD_MS] — kept for internal reachability checks. */
+    const val OFFLINE_GRACE_MS = PRESENCE_READY_THRESHOLD_MS
+
+    /** Firestore `updatedAtEpochMs` heartbeat while the share server is active. */
+    const val FIRESTORE_PRESENCE_HEARTBEAT_MS = 10 * 60 * 1000L
+
+    /** Minimum device-card "Connecting…" state before navigation or failure feedback. */
+    const val DEVICE_CONNECT_HANDSHAKE_MS = 2_000L
 
     /** Local-only UI re-evaluation when grace windows expire (no network I/O). */
     const val ONLINE_SNAPSHOT_REFRESH_MS = 60_000L

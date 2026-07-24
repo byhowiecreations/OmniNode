@@ -37,7 +37,7 @@ data class DeviceListRow(
             appVersionCode: Int = 0,
             lastSeenEpochMs: Long = 0L
         ): String {
-            val status = if (online) "Online" else "Offline"
+            val status = if (online) "Ready" else "Tap to wake"
             val version = appVersion?.trim()?.takeIf { it.isNotEmpty() }
             val versionLabel = version?.let { versionText ->
                 val codeSuffix = appVersionCode.takeIf { it > 0 }?.let { " ($it)" }.orEmpty()

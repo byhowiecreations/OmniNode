@@ -59,7 +59,7 @@ class PeerPresenceMonitor(
     fun isDeviceOnline(device: PairedDeviceEntity): Boolean {
         val probeEpoch = _reachabilityEpochMs.value[device.deviceId] ?: 0L
         val lastSeen = maxOf(probeEpoch, device.lastSeenEpochMs)
-        return TimeUtils.isWithinWindow(lastSeen, LanPresenceTiming.OFFLINE_GRACE_MS)
+        return TimeUtils.isWithinWindow(lastSeen, LanPresenceTiming.PRESENCE_READY_THRESHOLD_MS)
     }
 
     /** Local-only watcher — re-evaluates grace windows for badges without network I/O. */

@@ -74,9 +74,6 @@ import androidx.compose.ui.text.style.TextOverflow
 import androidx.compose.ui.unit.dp
 import androidx.compose.ui.unit.sp
 import androidx.lifecycle.viewmodel.compose.viewModel
-import com.fileapex.data.identity.LocalIdentity
-import com.fileapex.update.currentAppVersionCode
-import com.fileapex.update.currentAppVersionName
 import com.fileapex.domain.diagnostics.DeviceDiagnosticsFormatter
 import com.fileapex.presentation.BrowseTarget
 import com.fileapex.presentation.DeviceDetailsState
@@ -198,14 +195,9 @@ fun DevicesScreen(
             }
             PairedDevicesList(
                 listState = listState,
-                localDeviceName = state.localDeviceName,
                 deviceRows = deviceRows,
+                connectingDeviceId = state.connectingDeviceId,
                 selectedDeviceId = selectedDeviceId,
-                onOpenLocal = { currentOnOpenDevice(viewModel.thisDeviceTarget()) },
-                onRenameLocal = {
-                    renameText = state.localDeviceName
-                    viewModel.beginRename(LocalIdentity.LOCAL_DEVICE_ID)
-                },
                 onOpenDevice = { deviceId ->
                     viewModel.openDeviceOrExplain(deviceId) { target ->
                         currentOnOpenDevice(target)
@@ -457,11 +449,9 @@ fun DevicesScreen(
 @Composable
 private fun PairedDevicesList(
     listState: LazyListState,
-    localDeviceName: String,
     deviceRows: List<DeviceListRow>,
+    connectingDeviceId: String?,
     selectedDeviceId: String?,
-    onOpenLocal: () -> Unit,
-    onRenameLocal: () -> Unit,
     onOpenDevice: (String) -> Unit,
     onRenameDevice: (deviceId: String, deviceName: String) -> Unit,
     onDeviceDetails: (deviceId: String) -> Unit,
@@ -480,28 +470,6 @@ private fun PairedDevicesList(
         ),
         verticalArrangement = Arrangement.spacedBy(14.dp)
     ) {
-        item(
-            key = "this-device",
-            contentType = "local-device"
-        ) {
-            DeviceCard(
-                title = "This device ($localDeviceName)",
-                subtitle = localDeviceSubtitle(),
-                icon = Icons.Filled.PhoneAndroid,
-                selected = selectedDeviceId == LocalIdentity.LOCAL_DEVICE_ID,
-                onClick = onOpenLocal,
-                onRename = onRenameLocal,
-                onRemove = null,
-                dropDeviceId = LocalIdentity.LOCAL_DEVICE_ID,
-                onFilesDropped = onFilesDropped,
-                modifier = Modifier.animateItem(
-                    fadeInSpec = null,
-                    fadeOutSpec = null,
-                    placementSpec = null
-                )
-            )
-        }
-
         if (deviceRows.isEmpty()) {
             item(
                 key = "empty",
@@ -531,6 +499,7 @@ private fun PairedDevicesList(
                     subtitle = row.subtitle,
                     icon = deviceIconFor(row.deviceName),
                     selected = selectedDeviceId == row.deviceId,
+                    connecting = connectingDeviceId == row.deviceId,
                     onClick = { onOpenDevice(row.deviceId) },
                     onRename = { onRenameDevice(row.deviceId, row.deviceName) },
                     onDeviceDetails = { onDeviceDetails(row.deviceId) },
@@ -546,14 +515,6 @@ private fun PairedDevicesList(
             }
         }
     }
-}
-
-private fun localDeviceSubtitle(): String {
-    return DeviceListRow.peerStatusSubtitle(
-        online = true,
-        appVersion = currentAppVersionName(),
-        appVersionCode = currentAppVersionCode()
-    ) + " · Local files"
 }
 
 @Composable
@@ -675,6 +636,7 @@ private fun DeviceCard(
     onRemove: (() -> Unit)?,
     modifier: Modifier = Modifier,
     selected: Boolean = false,
+    connecting: Boolean = false,
     dropDeviceId: String? = null,
     onFilesDropped: ((deviceId: String, paths: List<String>) -> Unit)? = null
 ) {
@@ -702,7 +664,7 @@ private fun DeviceCard(
         modifier = modifier
             .fillMaxWidth()
             .then(dropModifier)
-            .clickable(onClick = onClick),
+            .clickable(enabled = !connecting, onClick = onClick),
         shape = RoundedCornerShape(16.dp),
         colors = CardDefaults.cardColors(containerColor = containerColor),
         elevation = CardDefaults.cardElevation(defaultElevation = if (highlighted) 0.dp else 3.dp),
@@ -740,13 +702,31 @@ private fun DeviceCard(
                     overflow = TextOverflow.Ellipsis
                 )
                 Spacer(modifier = Modifier.height(3.dp))
-                Text(
-                    text = subtitle,
-                    style = MaterialTheme.typography.bodySmall,
-                    color = MaterialTheme.colorScheme.onSurfaceVariant,
-                    maxLines = 1,
-                    overflow = TextOverflow.Ellipsis
-                )
+                if (connecting) {
+                    Row(verticalAlignment = Alignment.CenterVertically) {
+                        CircularProgressIndicator(
+                            modifier = Modifier.size(14.dp),
+                            strokeWidth = 2.dp,
+                            color = FileApexTeal
+                        )
+                        Spacer(modifier = Modifier.width(8.dp))
+                        Text(
+                            text = "Connecting…",
+                            style = MaterialTheme.typography.bodySmall,
+                            color = FileApexTeal,
+                            maxLines = 1,
+                            overflow = TextOverflow.Ellipsis
+                        )
+                    }
+                } else {
+                    Text(
+                        text = subtitle,
+                        style = MaterialTheme.typography.bodySmall,
+                        color = MaterialTheme.colorScheme.onSurfaceVariant,
+                        maxLines = 1,
+                        overflow = TextOverflow.Ellipsis
+                    )
+                }
             }
             if (selected) {
                 Icon(

@@ -275,7 +275,7 @@ private fun DetailEmptyState() {
             color = MaterialTheme.colorScheme.onSurfaceVariant
         )
         Text(
-            text = "Choose This device or a paired peer from the list.",
+            text = "Choose a paired peer from the list, or open Local Files from the navigation bar.",
             style = MaterialTheme.typography.bodyMedium,
             color = MaterialTheme.colorScheme.onSurfaceVariant,
             modifier = Modifier.padding(top = 6.dp)

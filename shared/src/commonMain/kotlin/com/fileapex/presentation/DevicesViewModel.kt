@@ -12,8 +12,10 @@ import com.fileapex.domain.pairing.PairingPayload
 import com.fileapex.domain.presence.LanPresenceTiming
 import com.fileapex.platform.purgeDirectShareTarget
 import com.fileapex.util.NetworkUtils
+import com.fileapex.util.TimeUtils
 import com.fileapex.session.DeviceSessionManager
 import kotlinx.coroutines.Dispatchers
+import kotlinx.coroutines.delay
 import kotlinx.coroutines.flow.MutableStateFlow
 import kotlinx.coroutines.flow.SharingStarted
 import kotlinx.coroutines.flow.StateFlow
@@ -36,6 +38,8 @@ data class DevicesUiState(
     val renameTargetId: String? = null,
     val statusMessage: String? = null,
     val errorMessage: String? = null,
+    /** Device card showing the 2s connecting handshake progress. */
+    val connectingDeviceId: String? = null,
     /** When set, UI must collect a PIN before completing pairing. */
     val pendingPinPairing: PairingPayload? = null,
     /** When set, UI must collect a PIN before browsing a PIN-protected peer. */
@@ -56,6 +60,15 @@ data class PendingPinUnlock(
     val device: PairedDeviceEntity,
     val displayName: String
 )
+
+private sealed interface DeviceConnectOutcome {
+    data class Open(val target: BrowseTarget) : DeviceConnectOutcome
+    data class NeedsPin(
+        val device: PairedDeviceEntity,
+        val displayName: String
+    ) : DeviceConnectOutcome
+    data class Unreachable(val detail: String) : DeviceConnectOutcome
+}
 
 class DevicesViewModel : ViewModel() {
     private val repository = FileApexServices.deviceRepository
@@ -85,8 +98,13 @@ class DevicesViewModel : ViewModel() {
         presence.onlineDeviceIds,
         presence.onlineSnapshotEpochMs
     ) { devices, _, _, _ ->
+        val selfDeviceId = identity.deviceId
         devices
             .distinctBy { it.deviceId }
+            .filter { device ->
+                device.deviceId != LocalIdentity.LOCAL_DEVICE_ID &&
+                    device.deviceId != selfDeviceId
+            }
             .map { device ->
                 DeviceListRow(
                     deviceId = device.deviceId,
@@ -148,58 +166,73 @@ class DevicesViewModel : ViewModel() {
     ) {
         _uiState.update {
             it.copy(
-                statusMessage = "Connecting to ${device.deviceName}…",
+                connectingDeviceId = device.deviceId,
+                statusMessage = null,
                 errorMessage = null
             )
         }
-        val peer = repository.getDevice(device.deviceId) ?: device
-        withContext(Dispatchers.IO) {
-            presence.validatePeerOnDemand(peer)
+        val startedAt = TimeUtils.now()
+        val outcome = runCatching {
+            withContext(Dispatchers.IO) {
+                performDeviceConnectHandshake(device)
+            }
+        }.getOrElse { error ->
+            DeviceConnectOutcome.Unreachable(error.message ?: "Unable to reach device")
         }
-        val refreshed = repository.getDevice(device.deviceId) ?: peer
-        _uiState.update { it.copy(statusMessage = null) }
-        continueOpenDeviceInternal(refreshed, open)
+        val remainingMs = LanPresenceTiming.DEVICE_CONNECT_HANDSHAKE_MS - TimeUtils.millisSince(startedAt)
+        if (remainingMs > 0L) {
+            delay(remainingMs)
+        }
+        _uiState.update { it.copy(connectingDeviceId = null) }
+        when (outcome) {
+            is DeviceConnectOutcome.Open -> open(outcome.target)
+            is DeviceConnectOutcome.NeedsPin -> {
+                pendingOpenAction = open
+                _uiState.update {
+                    it.copy(
+                        pendingPinUnlock = PendingPinUnlock(
+                            device = outcome.device,
+                            displayName = outcome.displayName
+                        ),
+                        statusMessage = "Enter PIN for ${outcome.displayName}"
+                    )
+                }
+            }
+            is DeviceConnectOutcome.Unreachable -> {
+                _uiState.update {
+                    it.copy(errorMessage = "Unable to reach device")
+                }
+            }
+        }
     }
 
-    private suspend fun continueOpenDeviceInternal(
-        device: PairedDeviceEntity,
-        open: (BrowseTarget) -> Unit
-    ) {
-        if (DeviceSessionManager.isSessionValid(device.deviceId)) {
-            DeviceSessionManager.markDeviceAccessed(device.deviceId)
-            open(browseTargetFor(device, pinRequired = true))
-            return
+    private suspend fun performDeviceConnectHandshake(device: PairedDeviceEntity): DeviceConnectOutcome {
+        val peer = repository.getDevice(device.deviceId) ?: device
+        presence.validatePeerOnDemand(peer)
+        val refreshed = repository.getDevice(device.deviceId) ?: peer
+        val host = refreshed.lastKnownIp.trim()
+        if (host.isEmpty() || host == "127.0.0.1" || host == "0.0.0.0") {
+            return DeviceConnectOutcome.Unreachable("No reachable endpoint")
         }
-        runCatching {
-            withContext(Dispatchers.IO) {
-                FileApexServices.client.fetchPeerNodeState(
-                    device.lastKnownIp,
-                    device.port,
-                    LanPresenceTiming.ON_DEMAND_HEALTH_TIMEOUT_MS
-                )
-            }
-        }.fold(
-            onSuccess = { remote ->
-                if (remote.pinRequired) {
-                    pendingOpenAction = open
-                    val name = remote.deviceName.ifBlank { device.deviceName }
-                    _uiState.update {
-                        it.copy(
-                            pendingPinUnlock = PendingPinUnlock(device = device, displayName = name),
-                            statusMessage = "Enter PIN for $name"
-                        )
-                    }
-                } else {
-                    open(browseTargetFor(device, pinRequired = false))
-                }
-            },
-            onFailure = { error ->
-                open(browseTargetFor(device, pinRequired = false))
-                _uiState.update {
-                    it.copy(errorMessage = error.message ?: "Could not reach ${device.deviceName}")
-                }
-            }
-        )
+        if (DeviceSessionManager.isSessionValid(refreshed.deviceId)) {
+            DeviceSessionManager.markDeviceAccessed(refreshed.deviceId)
+            return DeviceConnectOutcome.Open(browseTargetFor(refreshed, pinRequired = true))
+        }
+        val remote = runCatching {
+            FileApexServices.client.fetchPeerNodeState(
+                host,
+                refreshed.port,
+                LanPresenceTiming.ON_DEMAND_HEALTH_TIMEOUT_MS
+            )
+        }.getOrElse { error ->
+            return DeviceConnectOutcome.Unreachable(error.message ?: "Connection refused")
+        }
+        if (remote.pinRequired) {
+            val name = remote.deviceName.ifBlank { refreshed.deviceName }
+            return DeviceConnectOutcome.NeedsPin(refreshed, name)
+        }
+        DeviceSessionManager.markDeviceAccessed(refreshed.deviceId)
+        return DeviceConnectOutcome.Open(browseTargetFor(refreshed, pinRequired = false))
     }
 
     fun pairFromQrPayload(payload: PairingPayload) {
