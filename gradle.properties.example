@@ -1,0 +1,38 @@
+# Copy to gradle.properties (gitignored) and fill in real values.
+# NEVER commit gradle.properties — it contains secrets.
+
+fileapex.version.name=0.0.0
+fileapex.version.code=1
+
+# Google OAuth — two GCC client types, different roles:
+#
+# WEB client (type "Web application") — required for Android Credential Manager.
+#   Android does not use the secret. Mac falls back to this id only when no Desktop client is configured,
+#   and then requires the Web client_secret JSON in json/ (see docs/gcp-mac-oauth-setup.md).
+fileapex.google.web.client.id=YOUR_WEB_CLIENT_ID.apps.googleusercontent.com
+fileapex.google.web.client.secret=
+#
+# DESKTOP client (recommended for Mac) — GCC "Desktop" OAuth client; PKCE loopback, no secret required.
+# Download JSON from GCP → json/ (build auto-reads installed.client_id), or set id manually:
+# fileapex.google.desktop.client.id=
+# fileapex.google.desktop.client.secret=
+
+# Firebase client config (Firebase Console → Project settings → Your apps → Android)
+fileapex.firebase.project.id=your-firebase-project-id
+fileapex.firebase.api.key=YOUR_FIREBASE_API_KEY
+fileapex.firebase.application.id=1:YOUR_PROJECT_NUMBER:android:YOUR_APP_HASH
+
+# Firebase Admin SDK service account JSON (gitignored json/ folder at project root)
+fileapex.firebase.service.account.json=json/your-project-firebase-adminsdk-xxxxx.json
+
+org.gradle.jvmargs=-Xmx4g -Dfile.encoding=UTF-8
+org.gradle.parallel=true
+org.gradle.caching=true
+
+android.useAndroidX=true
+android.nonTransitiveRClass=true
+kotlin.code.style=official
+kotlin.mpp.androidSourceSetLayoutVersion=2
+org.jetbrains.compose.experimental.jscanvas.enabled=false
+
+org.gradle.java.home=.build-jdk/jdk-21.0.11+10/Contents/Home

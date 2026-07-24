@@ -1,0 +1,51 @@
+# Cursor IDE — local/editor only (also in ~/.gitignore_global)
+.cursor/
+
+# Built artifacts
+/.gradle/
+/gradle.properties
+**/build/
+/current/
+/local.properties
+/.build-jdk/
+/secret.properties
+signing.local.env
+# Firebase / Google cloud config — local only, never commit
+/json/
+**/.DS_Store
+composeApp/google-services.json
+*-firebase-adminsdk-*.json
+*firebase-adminsdk*.json
+*client_secret*.json
+*.iml
+.idea/
+.DS_Store
+captures/
+*.apk
+*.aab
+*.ap_
+*.dex
+*.class
+bin/
+gen/
+out/
+.cxx/
+*.log
+*.hprof
+
+# Kotlin
+.kotlin/
+
+# Desktop
+composeApp/release/
+
+# macOS extension build products
+macos/build/
+macos/**/DerivedData/
+
+
+# Xcode user state
+**/xcuserdata/
+*.xcuserstate
+docs/
+

@@ -1,0 +1,9 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+	<!-- Intentionally empty: unsandboxed local desktop app.
+	     Do not set com.apple.security.app-sandbox (even to false) —
+	     that key and related file-access entitlements trigger TCC prompts. -->
+</dict>
+</plist>
